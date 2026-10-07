@@ -4,7 +4,7 @@ Guidance for Claude Code (and humans) working in this repository.
 
 ## What this is
 
-`lray` is a Go CLI that manages local Liferay environments without blade: it scaffolds Gradle workspaces, registers existing workspaces/bundles, starts and stops Tomcat, tails logs with colors and deploys modules. The UI is led by **Faro**, a small lighthouse mascot ("Liferay" → "life ray").
+`lray` is a Go CLI that manages local Liferay environments without blade: it scaffolds Gradle workspaces and modules, registers existing workspaces/bundles, starts and stops Tomcat, tails logs with colors, deploys modules and updates itself. The UI is led by **Faro**, a small lighthouse mascot ("Liferay" → "life ray").
 
 - Repo: https://github.com/katarem/lray
 - Go 1.23+, pure Go, `CGO_ENABLED=0`
@@ -13,15 +13,16 @@ Guidance for Claude Code (and humans) working in this repository.
 ## Commands
 
 ```sh
-go vet ./...         # what CI runs (with go build) on Linux, macOS and Windows
+go vet ./...         # what CI runs (with go build and go test) on Linux, macOS and Windows
 go build ./...
+go test ./...
 make build           # bin/lray with version from git describe
 make install         # build + install to ~/.local/bin (PREFIX=... to change)
 make cross           # binaries for all platforms in dist/, no GoReleaser
 make snapshot        # full local release in dist/ (needs goreleaser)
 ```
 
-There are no tests yet. If you add some, follow `~/.claude/skills/go-testing/SKILL.md` (teatest for Bubbletea models).
+Tests live next to the code (`internal/scaffold/module_test.go`, `internal/update/update_test.go`). If you add more, follow `~/.claude/skills/go-testing/SKILL.md` when available (teatest for Bubbletea models).
 
 The version is injected at build time with `-ldflags "-X main.version=..."`; `go run`/`go install` builds report `dev`.
 
@@ -29,16 +30,18 @@ The version is injected at build time with `-ldflags "-X main.version=..."`; `go
 
 ```
 main.go                     entry point; holds `version`
-internal/cli/               one file per command (cobra); root.go has Execute, help template and shared helpers; server.go groups `lray server ...`
+internal/cli/               one file per command (cobra); root.go has Execute, help template and shared helpers; server.go groups `lray server ...`, workspace.go `lray workspace ...` (+ shared workspace creation), module.go `lray module ...`, update.go `lray update` + the background check
 internal/config/            server registry (servers.json), atomic save
 internal/liferay/           workspace/bundle detection (Layout), state, start/stop, Gradle runner
 internal/logs/              efficient tail -f and per-level highlighting
-internal/scaffold/          workspace generation + Liferay releases.json catalog
+internal/scaffold/          workspace + module generation, Liferay releases.json catalog
+internal/scaffold/templates/ module templates (blade's project templates as text/template), embedded (go:embed all:templates)
 internal/scaffold/wrapper/  official Gradle wrapper, embedded in the binary (go:embed all:wrapper)
 internal/ui/                Faro, palette, spinners (RunTask), prompts
+internal/update/            latest-release lookup, version compare, self-update (download + checksum + replace)
 ```
 
-Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `liferay` → `logs`. `ui`, `config`, `logs` and `scaffold` do not import other internal packages. Keep it that way: domain packages never print or prompt; that belongs to `cli` + `ui`.
+Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `liferay` → `logs`. `cli` → `update`. `ui`, `config`, `logs`, `scaffold` and `update` do not import other internal packages. Keep it that way: domain packages never print or prompt; that belongs to `cli` + `ui`.
 
 ## How it works
 
@@ -51,6 +54,10 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `
 - **Deploy**: runs the workspace `gradlew deploy` from the **current directory** (Gradle builds the project of that folder, like `blade deploy`) and adds `-Pliferay.workspace.home.dir=<server home>` so JARs land in the chosen server.
 - **Per-server Java**: `config.Server.JavaHome` is exported as `JAVA_HOME` (and `JRE_HOME` for Tomcat) on start, stop, deploy and `initBundle`.
 - **Init**: writes `settings.gradle`, `gradle.properties`, config folders and the embedded wrapper; workspace plugin version is `scaffold.DefaultPluginVersion`, overridable with `--plugin-version` / `LRAY_WORKSPACE_PLUGIN_VERSION`. Releases come from Liferay's `releases.json` (CDN, then fallback mirrors) cached 24 h in the user cache dir; a stale cache beats no data.
+
+- **Workspace create**: `lray workspace create [nombre]` and `lray server init <nombre>` share `createWorkspace(reg, workspacePlan, yes)` in `workspace.go` (summary → `scaffold.Create` → optional registry entry → optional `initBundle`). `workspace create` only asks what was not given as a flag (`cmd.Flags().Changed`) and works without a TTY with name + `--product` + `--yes`.
+- **Module create** (`scaffold.CreateModule`): templates live in `internal/scaffold/templates/<type>/`, ported from liferay-portal `modules/sdk/project-templates/project-templates-<type>/src/main/resources/archetype-resources` (Gradle variant only, no Maven bits). In paths `__pkg__` = package as folders, `__Class__` = class prefix, `__name__` = module name; contents use `{{.Package}}`, `{{.ClassName}}`, `{{.Name}}`, `{{.Product}}` (dxp|portal), `{{.Legacy}}` (< 7.4)… with `missingkey=error`. Add a type by adding a folder and an entry in `scaffold.ModuleTypes`. Defaults for package/class prefix copy blade (`DefaultPackage`, `DefaultClassName`). Edition and Jakarta come from `liferay.workspace.product`: from 2025.Q3 every `javax` becomes `jakarta` and the JSTL core taglib URI changes (same as blade's `JakartaCompatabilityUtil`). The target folder is the workspace `liferay.workspace.modules.dir` (default `modules`) unless `--dir`; outside a workspace, `--server` or a picker of registered workspaces.
+- **Update**: `update.Latest` reads the tag from the redirect of `github.com/<repo>/releases/latest` (no API rate limit). `lray update` downloads `lray_<os>_<arch>.tar.gz|zip` + `checksums.txt` (names from `.goreleaser.yaml`), verifies sha256, writes a temp file next to the binary and renames it over (Windows renames the running exe to `.old`, removed by `update.CleanupOld` on next start). Homebrew installs are refused (`brew upgrade lray`). `Execute` starts `startUpdateCheck` in the background (cached 24 h in `<user cache>/lray/update.json`, attempt recorded before the request so offline runs don't retry) and prints a one-line notice after a successful command; skipped for non-release versions, non-TTY, `update`/`completion`/`__complete`, or `LRAY_NO_UPDATE_CHECK`. Versions compare as semver; `git describe` suffixes (`-3-gabc123[-dirty]`) count as the same release.
 
 ## Conventions
 
@@ -70,17 +77,21 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `
 | Variable | Effect |
 |---|---|
 | `LRAY_HOME` | Overrides the config dir holding `servers.json` |
-| `LRAY_WORKSPACE_PLUGIN_VERSION` | Workspace plugin version used by `init` |
+| `LRAY_WORKSPACE_PLUGIN_VERSION` | Workspace plugin version used by `server init` / `workspace create` |
 | `NO_COLOR` | Disables colors in `logs` |
-| `LRAY_REPO`, `LRAY_VERSION`, `LRAY_BIN_DIR` | `install.sh` only |
+| `LRAY_NO_UPDATE_CHECK` | Disables the daily new-version notice |
+| `LRAY_REPO` | Repo for releases: `install.sh` and `lray update` |
+| `LRAY_VERSION`, `LRAY_BIN_DIR` | `install.sh` only |
 
 ## Release
 
-Push a `v*` tag → `.github/workflows/release.yml` runs GoReleaser: builds linux/darwin/windows × amd64/arm64, uploads archives named `lray_<os>_<arch>` (no version, so `install.sh` can use `releases/latest/download`) plus `checksums.txt`, and updates the Homebrew formula in `<owner>/homebrew-tap` (needs the `HOMEBREW_TAP_TOKEN` secret).
+Push a `v*` tag → `.github/workflows/release.yml` runs GoReleaser: builds linux/darwin/windows × amd64/arm64, uploads archives named `lray_<os>_<arch>` (no version, so `install.sh` can use `releases/latest/download`) plus `checksums.txt`, and updates the Homebrew formula in `<owner>/homebrew-tap` only when the `HOMEBREW_TAP_TOKEN` secret is set (`skip_upload` uses `isEnvSet`; without it the release still succeeds). `brews` is deprecated in GoReleaser v2 but still works.
 
 ## Known gotchas
 
-- The module path is `github.com/katarem/lray`. If the repo ever moves, update `go.mod`, every internal import, the `install.sh` default `LRAY_REPO` and `.goreleaser.yaml` together.
+- The module path is `github.com/katarem/lray`. If the repo ever moves, update `go.mod`, every internal import, the `install.sh` default `LRAY_REPO`, `update.DefaultRepo` and `.goreleaser.yaml` together.
+- `lray update` depends on the archive names in `.goreleaser.yaml` (`lray_<os>_<arch>`, zip on Windows, binary at the archive root) and on `checksums.txt`; change `update.Asset`/`extract` if those change.
+- `ui.IsTTY()` treats `/dev/null` as a terminal (it is a char device), so `lray ... > /dev/null` still tries interactive forms; pipe through `cat` in scripts.
 - Install methods only work once a `v*` release exists; Homebrew also needs the `katarem/homebrew-tap` repo and the `HOMEBREW_TAP_TOKEN` secret.
 - Only Gradle workspaces are supported (no Maven).
 - Windows support is less tested than Linux/macOS.
