@@ -116,7 +116,7 @@ ellos y lo actualiza.`,
 				if r.on {
 					on++
 				}
-				data = append(data, []string{ui.Bold(s.Name), orDash(r.version), r.state, r.port, ui.MutedText(ui.ShortPath(s.Path))})
+				data = append(data, []string{ui.Bold(s.Name), kindLabel(s), orDash(r.version), r.state, r.port, ui.MutedText(ui.ShortPath(s.Path))})
 			}
 			stale := 0
 			for _, s := range remotes {
@@ -131,7 +131,7 @@ ellos y lo actualiza.`,
 				if s.Port != 0 {
 					port = fmt.Sprint(s.Port)
 				}
-				data = append(data, []string{ui.Bold(s.Name), orDash(s.Version), snapshotLabel(snap, ok), port, ui.MutedText(s.Location())})
+				data = append(data, []string{ui.Bold(s.Name), kindLabel(s), orDash(s.Version), snapshotLabel(snap, ok), port, ui.MutedText(s.Location())})
 			}
 			if changed {
 				_ = reg.Save()
@@ -142,7 +142,7 @@ ellos y lo actualiza.`,
 			t := table.New().
 				Border(lipgloss.RoundedBorder()).
 				BorderStyle(lipgloss.NewStyle().Foreground(ui.Muted)).
-				Headers("Nombre", "Versión", "Estado", "Puerto", "Ubicación").
+				Headers("Nombre", "Tipo", "Versión", "Estado", "Puerto", "Ubicación").
 				Rows(data...).
 				StyleFunc(func(r, _ int) lipgloss.Style {
 					if r == table.HeaderRow {
@@ -206,7 +206,7 @@ func syncRemotes(ctx context.Context, servers []*config.Server, states *config.S
 		}
 	}
 
-	versions := map[*config.Server]string{}
+	changed := false
 	var mu sync.Mutex
 	pending := 0
 	for _, t := range ts {
@@ -226,8 +226,8 @@ func syncRemotes(ctx context.Context, servers []*config.Server, states *config.S
 						return
 					}
 					states.Seen(t.s.Name, stateName(info.State))
-					if t.s.Version == "" && info.Version != "" {
-						versions[t.s] = info.Version
+					if learn(t.s, info) {
+						changed = true
 					}
 				})
 				return nil
@@ -241,8 +241,15 @@ func syncRemotes(ctx context.Context, servers []*config.Server, states *config.S
 			ui.Warn(capitalize(err.Error()))
 		}
 	}
-	for s, v := range versions {
-		s.Version = v
+	return changed
+}
+
+var remoteKind = lipgloss.NewStyle().Foreground(ui.Sea).Bold(true)
+
+// kindLabel distingue de un vistazo los servers de esta máquina de los remotos.
+func kindLabel(s *config.Server) string {
+	if s.IsRemote() {
+		return remoteKind.Render("REMOTO")
 	}
-	return len(versions) > 0
+	return "LOCAL"
 }

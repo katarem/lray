@@ -25,10 +25,10 @@ func newStart() *cobra.Command {
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Arrancar y volver a la terminal sin esperar")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Remotos: no pedir confirmación")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if _, s, err := findServer(args[0]); err != nil {
+		if reg, s, err := findServer(args[0]); err != nil {
 			return err
 		} else if s.IsRemote() {
-			r, started, err := remoteStart(cmd.Context(), s, yes)
+			r, started, err := remoteStart(cmd.Context(), reg, s, yes)
 			if err != nil || !started {
 				return err
 			}
@@ -159,10 +159,10 @@ func newStop() *cobra.Command {
 	var yes bool
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Remotos: no pedir confirmación")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if _, s, err := findServer(args[0]); err != nil {
+		if reg, s, err := findServer(args[0]); err != nil {
 			return err
 		} else if s.IsRemote() {
-			return remoteStop(cmd.Context(), s, yes, *timeout)
+			return remoteStop(cmd.Context(), reg, s, yes, *timeout)
 		}
 		_, s, l, err := loadServer(args[0])
 		if err != nil {

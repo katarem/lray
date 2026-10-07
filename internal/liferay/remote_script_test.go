@@ -235,3 +235,134 @@ func TestInspectScriptFindsJavaProcess(t *testing.T) {
 		t.Errorf("con proceso: %+v, %v", info, err)
 	}
 }
+
+// La versión sale de la cabecera Liferay-Portal y, si el portal no la
+// dice, de un log de hace semanas.
+func TestInspectScriptVersion(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("hace falta curl")
+	}
+	home := fakeJBoss(t)
+	srv := httptest.NewServer(portalHandler())
+	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	r := &Remote{Exec: localExec{}, Path: home, Port: port, Status: "true"}
+	info, err := r.Inspect(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != Running || info.HTTP != 302 {
+		t.Errorf("State = %v, HTTP = %d (%s)", info.State, info.HTTP, info.URL)
+	}
+	if info.Version != "DXP 7.4.13 Update 95" {
+		t.Errorf("Version = %q, want la de la cabecera", info.Version)
+	}
+
+	logs := filepath.Join(home, "logs")
+	for i := 1; i <= 10; i++ {
+		f := filepath.Join(logs, fmt.Sprintf("liferay.2026-09-%02d.log", 20+i))
+		if err := os.WriteFile(f, []byte("2026-09 INFO  [main][Foo:1] nada\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-time.Duration(30-i) * 24 * time.Hour)
+		_ = os.Chtimes(f, old, old)
+	}
+	old := time.Now().Add(-40 * 24 * time.Hour) // el que tiene el arranque, el más viejo
+	_ = os.Chtimes(filepath.Join(logs, "liferay.2026-10-06.log"), old, old)
+	r.Port = 1 // nadie escucha: sin cabecera
+	if info, err = r.Inspect(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if info.Version != "DXP 7.4.13 Update 92" {
+		t.Errorf("Version = %q, want la del log viejo", info.Version)
+	}
+}
+
+// En los servidores suele haber http_proxy en el entorno: la sonda no debe ir
+// por él. curl ya no usa el proxy para IPs de loopback, así que hace falta
+// escuchar en la IP de la máquina (si no tiene, se salta).
+func TestInspectScriptIgnoresProxy(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("hace falta curl")
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(hostIP(t), "0"))
+	if err != nil {
+		t.Skip("no puedo escuchar en la IP de la máquina:", err)
+	}
+	srv := httptest.NewUnstartedServer(portalHandler())
+	srv.Listener.Close()
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	t.Setenv("http_proxy", "http://127.0.0.1:9") // si curl lo usara, no llegaría nunca
+
+	r := &Remote{Exec: localExec{}, Path: fakeJBoss(t), Port: srv.Listener.Addr().(*net.TCPAddr).Port, Status: "true"}
+	info, err := r.Inspect(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != Running || info.HTTP != 302 {
+		t.Errorf("State = %v, HTTP = %d (%s)", info.State, info.HTTP, info.URL)
+	}
+}
+
+func portalHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Liferay-Portal", "Liferay Digital Experience Platform 7.4.13 Update 95 (Cavanaugh / Build 7413 / May 1, 2024)")
+		w.WriteHeader(http.StatusFound)
+	})
+}
+
+// El puerto sale de la configuración que usa de verdad (-c) y de las
+// propiedades de su línea de comandos.
+func TestInspectScriptReadsJavaCommandLine(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("hace falta bash para disfrazar un proceso de java")
+	}
+	home := fakeJBoss(t)
+	app := filepath.Join(home, "jboss-eap-7.4")
+	full := `<server><socket-binding-group name="s" port-offset="${jboss.socket.binding.port-offset:0}">
+<socket-binding name="http" port="${jboss.http.port:8080}"/></socket-binding-group></server>`
+	if err := os.WriteFile(filepath.Join(app, "standalone", "configuration", "standalone-full.xml"), []byte(full), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := exec.Command(bash, "-c",
+		`exec -a /usr/lib/jvm/bin/java sh -c 'sleep 30; :' -Djboss.socket.binding.port-offset=300 "-Djboss.home.dir=$1" -b 10.9.8.7 -c standalone-full.xml`, "x", app)
+	if err := fake.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fake.Process.Kill(); _ = fake.Wait() }()
+	time.Sleep(200 * time.Millisecond)
+
+	out, err := localExec{}.Run(context.Background(), inspectScript, home, "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := parseInspect(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Port != 8380 || info.Bind != "10.9.8.7" || !strings.HasSuffix(info.Config, "standalone-full.xml") || info.Active != "1" {
+		t.Errorf("= %+v", info)
+	}
+}
+
+// hostIP es la primera IPv4 (no de loopback) a la que resuelve el nombre de
+// la máquina.
+func hostIP(t *testing.T) string {
+	t.Helper()
+	name, err := os.Hostname()
+	if err != nil {
+		t.Skip("sin nombre de máquina")
+	}
+	addrs, _ := net.LookupHost(name)
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && ip.To4() != nil && !ip.IsLoopback() {
+			return a
+		}
+	}
+	t.Skip("el nombre de la máquina no resuelve a una IP que no sea de loopback")
+	return ""
+}

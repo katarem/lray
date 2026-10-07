@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -44,11 +46,14 @@ type RemoteInfo struct {
 	Home      string // liferay home
 	AppServer string // tomcat, jboss o "" si no se ha encontrado
 	AppDir    string // carpeta del servidor de aplicaciones
-	Port      int    // puerto HTTP según su configuración (0 si no se sabe)
+	Config    string // fichero de configuración leído (server.xml, standalone*.xml)
+	Port      int    // puerto HTTP según su configuración y la línea de comandos (0 si no se sabe)
+	Bind      string // IP de escucha si no es todas (-b / jboss.bind.address)
 	LogFile   string // log más reciente que encaja con el patrón
 	Version   string
 	Active    string // "1", "0" o "" si no se ha podido saber
 	HTTP      int    // código HTTP de la sonda; 0 = sin respuesta, -1 = sin sonda
+	URL       string // dirección sondeada que dio ese código
 	Since     string // desde cuándo está activo (systemd)
 	State     State
 }
@@ -65,23 +70,52 @@ func (r *Remote) LogPattern() string {
 	return path.Join(r.Path, log)
 }
 
-// Inspect averigua en un solo viaje dónde está cada cosa y en qué estado está.
-// withVersion busca además la versión en los logs (más lento con logs grandes).
+// Inspect averigua dónde está cada cosa y en qué estado está. Son dos
+// viajes: el primero localiza el servidor, su configuración y su proceso; el
+// segundo sondea HTTP en el puerto que de verdad usa (el de la configuración
+// con lo que cambie su línea de comandos, y el registrado si es otro).
+// withVersion busca además la versión en los logs si el portal no la dice
+// en sus cabeceras (más lento con muchos logs).
 func (r *Remote) Inspect(ctx context.Context, withVersion bool) (*RemoteInfo, error) {
 	want := ""
 	if withVersion {
 		want = "1"
 	}
-	out, err := r.Exec.Run(ctx, inspectScript, r.Path, r.Log, strconv.Itoa(r.Port), r.Status, r.Since, want)
+	out, err := r.Exec.Run(ctx, inspectScript, r.Path, r.Log, r.Status, r.Since, want)
 	if err != nil {
 		return nil, err
 	}
-	return parseInspect(out, r.Port)
+	info, err := parseInspect(out)
+	if err != nil {
+		return nil, err
+	}
+	if info.Active != "0" {
+		var args []string
+		for _, p := range []int{info.Port, r.Port} {
+			if p > 0 && !slices.Contains(args, strconv.Itoa(p)) {
+				args = append(args, strconv.Itoa(p))
+			}
+		}
+		if len(args) > 0 {
+			bind := info.Bind
+			if strings.Contains(bind, ":") {
+				bind = "[" + bind + "]" // IPv6 en una URL
+			}
+			out, err := r.Exec.Run(ctx, probeScript, append([]string{bind}, args...)...)
+			if err != nil {
+				return nil, err
+			}
+			parseProbe(out, info)
+		}
+	}
+	info.State = remoteState(info.Active, info.HTTP)
+	return info, nil
 }
 
-func parseInspect(out []byte, port int) (*RemoteInfo, error) {
+func parseInspect(out []byte) (*RemoteInfo, error) {
 	info := &RemoteInfo{HTTP: -1}
 	var conf bytes.Buffer
+	var jvm string
 	inConf := false
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(make([]byte, 64*1024), 16<<20)
@@ -120,6 +154,10 @@ func parseInspect(out []byte, port int) (*RemoteInfo, error) {
 			info.AppServer = v
 		case "app":
 			info.AppDir = v
+		case "conf":
+			info.Config = v
+		case "jvm":
+			jvm = v
 		case "log":
 			info.LogFile = v
 		case "starting":
@@ -128,8 +166,6 @@ func parseInspect(out []byte, port int) (*RemoteInfo, error) {
 			}
 		case "active":
 			info.Active = v
-		case "http":
-			info.HTTP, _ = strconv.Atoi(v)
 		case "since":
 			_, after, found := strings.Cut(v, "=") // ActiveEnterTimestamp=...
 			if !found {
@@ -145,23 +181,73 @@ func parseInspect(out []byte, port int) (*RemoteInfo, error) {
 	case "tomcat":
 		info.Port = tomcatPort(conf.Bytes())
 	case "jboss":
-		info.Port = jbossPort(conf.Bytes())
+		props := jvmProps(jvm)
+		info.Port = jbossPort(conf.Bytes(), props)
+		info.Bind = jbossBind(jvm, props)
 	}
-	info.State = remoteState(info.Active, info.HTTP, port > 0)
 	return info, nil
 }
 
+// parseProbe se queda con la mejor respuesta de la sonda: la primera que
+// dice que el portal está listo o, si ninguna, la primera que respondió algo.
+func parseProbe(out []byte, info *RemoteInfo) {
+	info.HTTP, info.URL = -1, ""
+	for _, line := range strings.Split(string(out), "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
+		switch k {
+		case "probe":
+			u, c, _ := strings.Cut(v, " ")
+			code, _ := strconv.Atoi(c)
+			better := info.URL == "" ||
+				!httpReady(info.HTTP) && httpReady(code) ||
+				info.HTTP <= 0 && code > 0
+			if better {
+				info.HTTP, info.URL = code, u
+			}
+		case "portal":
+			if m := portalHeaderRe.FindStringSubmatch(v); m != nil && strings.ContainsAny(m[1], "0123456789") {
+				info.Version = prettyVersion(m[1]) // la del portal en marcha manda sobre la de los logs
+			}
+		}
+	}
+}
+
+// portalHeaderRe saca el nombre de la cabecera Liferay-Portal
+// ("Liferay Digital Experience Platform 7.4.13 Update 92 (Cavanaugh / ...)").
+var portalHeaderRe = regexp.MustCompile(`^(Liferay [^(]+?)\s*(?:\(|$)`)
+
+// httpReady dice si un código HTTP es de un portal ya desplegado. Al arrancar,
+// JBoss responde 404 antes de que Liferay esté desplegado y 503 mientras se
+// inicia; 502/504 vendrían de un proxy por el medio.
+func httpReady(code int) bool {
+	switch code {
+	case 404, 502, 503, 504:
+		return false
+	}
+	return code > 0
+}
+
+// AnsweredPort es el puerto en el que el portal respondió listo (0 si no).
+func (i *RemoteInfo) AnsweredPort() int {
+	if !httpReady(i.HTTP) {
+		return 0
+	}
+	u, err := url.Parse(i.URL)
+	if err != nil {
+		return 0
+	}
+	p, _ := strconv.Atoi(u.Port())
+	return p
+}
+
 // remoteState combina "¿está el proceso/servicio activo?" con la sonda HTTP.
-// Al arrancar, JBoss responde 404 antes de que Liferay esté desplegado, así
-// que solo cuentan como listo las respuestas propias de un portal.
-func remoteState(active string, code int, probed bool) State {
-	ready := code >= 200 && code < 400 || code == 401 || code == 403
+func remoteState(active string, code int) State {
 	switch {
 	case active == "0":
 		return Stopped
-	case ready:
+	case httpReady(code):
 		return Running
-	case active == "1" && (!probed || code < 0):
+	case active == "1" && code < 0:
 		return Running // no hay forma de sondear: nos fiamos del servicio
 	case active == "1":
 		return Starting
@@ -173,12 +259,37 @@ var (
 	socketGroupRe = regexp.MustCompile(`<socket-binding-group\b[^>]*\bport-offset="([^"]*)"`)
 	httpBindingRe = regexp.MustCompile(`<socket-binding\b[^>]*\bname="http"[^>]*>`)
 	bindingPortRe = regexp.MustCompile(`\bport="([^"]*)"`)
+	jvmPropRe     = regexp.MustCompile(`(?:^|\s)-D([\w.\-]+)=(\S*)`)
+	jvmBindRe     = regexp.MustCompile(`(?:^|\s)-b[= ](\S+)`)
 )
 
+// jvmProps saca las -Dpropiedad=valor de una línea de comandos de java.
+func jvmProps(jvm string) map[string]string {
+	props := map[string]string{}
+	for _, m := range jvmPropRe.FindAllStringSubmatch(jvm, -1) {
+		props[m[1]] = m[2]
+	}
+	return props
+}
+
+// jbossBind es la IP en la que escucha JBoss si no es "todas" (-b o
+// jboss.bind.address); "" si no se sabe o escucha en todas.
+func jbossBind(jvm string, props map[string]string) string {
+	b := props["jboss.bind.address"]
+	if m := jvmBindRe.FindStringSubmatch(jvm); m != nil {
+		b = m[1]
+	}
+	switch b {
+	case "0.0.0.0", "::", "127.0.0.1", "localhost":
+		return ""
+	}
+	return b
+}
+
 // jbossPort lee el puerto HTTP de un standalone.xml: el socket-binding "http"
-// más el port-offset del grupo. Entiende ${propiedad:valor} (se queda con el
-// valor por defecto).
-func jbossPort(data []byte) int {
+// más el port-offset del grupo. Entiende ${propiedad:valor}: vale la
+// propiedad si se pasó con -D al arrancar y, si no, el valor por defecto.
+func jbossPort(data []byte, props map[string]string) int {
 	tag := httpBindingRe.Find(data)
 	if tag == nil {
 		return 0
@@ -187,23 +298,23 @@ func jbossPort(data []byte) int {
 	if m == nil {
 		return 0
 	}
-	port := expr(string(m[1]))
+	port := expr(string(m[1]), props)
 	if port <= 0 {
 		return 0
 	}
 	if g := socketGroupRe.FindSubmatch(data); g != nil {
-		port += expr(string(g[1]))
+		port += expr(string(g[1]), props)
 	}
 	return port
 }
 
 // expr evalúa "8080" o "${jboss.http.port:8080}".
-func expr(v string) int {
+func expr(v string, props map[string]string) int {
 	v = strings.TrimSpace(v)
 	if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
-		_, def, ok := strings.Cut(v[2:len(v)-1], ":")
-		if !ok {
-			return 0
+		name, def, _ := strings.Cut(v[2:len(v)-1], ":")
+		if p, ok := props[name]; ok {
+			def = p
 		}
 		v = def
 	}
@@ -248,11 +359,12 @@ func FindServices(ctx context.Context, e Exec) []string {
 	return strings.Fields(string(out))
 }
 
-// inspectScript: $1 ruta, $2 patrón de logs, $3 puerto, $4 comando de estado,
-// $5 comando "desde", $6 "1" para buscar la versión. Sale siempre con 0 y
-// cuenta los problemas con error=..., así no se confunden con fallos de ssh.
+// inspectScript: $1 ruta, $2 patrón de logs, $3 comando de estado, $4
+// comando "desde", $5 "1" para buscar la versión en los logs. Sale siempre
+// con 0 y cuenta los problemas con error=..., así no se confunden con fallos
+// de ssh.
 const inspectScript = `
-p=$1; log=$2; port=$3; status=$4; since=$5; want=$6
+p=$1; log=$2; status=$3; since=$4; want=$5
 case "$p" in "~") p=$HOME ;; "~/"*) p="$HOME/${p#"~/"}" ;; esac
 [ -d "$p" ] || { echo error=nodir; exit 0; }
 cd "$p" 2>/dev/null || { echo error=noaccess; exit 0; }
@@ -278,41 +390,78 @@ fi
 echo "home=$home"
 echo "kind=$kind"
 echo "app=$app"
+jvm=
+if [ -n "$app" ]; then
+	real=$(cd "$app" && pwd -P)
+	jvm=$({ ps -e -ww -o args= 2>/dev/null || ps -eo args= 2>/dev/null; } |
+		awk -v a="$app" -v b="$real" '$1 ~ /java$/ && (index($0, a) || index($0, b)) { print; exit }')
+	echo "jvm=$jvm"
+fi
 case "$kind" in
 	tomcat) conf="$app/conf/server.xml" ;;
-	jboss) conf="$app/standalone/configuration/standalone.xml" ;;
+	jboss)
+		cfg=standalone.xml
+		case "$jvm" in
+			*--server-config=*) cfg=${jvm##*--server-config=} ;;
+			*" -c="*) cfg=${jvm##*" -c="} ;;
+			*" -c "*) cfg=${jvm##*" -c "} ;;
+		esac
+		cfg=${cfg%% *}
+		case "$cfg" in /*) conf=$cfg ;; *) conf="$app/standalone/configuration/$cfg" ;; esac
+		;;
 	*) conf= ;;
 esac
-if [ -n "$conf" ] && [ -r "$conf" ]; then echo @@conf; cat "$conf"; echo; echo @@end; fi
+if [ -n "$conf" ] && [ -r "$conf" ]; then echo "conf=$conf"; echo @@conf; cat "$conf"; echo; echo @@end; fi
 [ -n "$log" ] || log=logs/liferay.*.log
 case "$log" in /*) ;; *) log="$home/$log" ;; esac
 ldir=$(dirname "$log"); lglob=$(basename "$log")
 latest=$(cd "$ldir" 2>/dev/null && ls -t -- $lglob 2>/dev/null | head -n 1)
 [ -n "$latest" ] && echo "log=$ldir/$latest"
-if [ "$want" = 1 ] && [ -n "$latest" ]; then
-	v=$(cd "$ldir" && ls -t -- $lglob 2>/dev/null | head -n 3 | while read -r f; do
-		grep -h "Starting Liferay" "$f" 2>/dev/null | tail -n 1
-	done | head -n 1)
+if [ "$want" = 1 ]; then
+	# El arranque puede ser de hace semanas: se buscan los logs del más nuevo al
+	# más viejo (también los de JBoss) y se para en el primero que lo tenga.
+	v=
+	for f in $(cd "$ldir" 2>/dev/null && ls -t -- $lglob 2>/dev/null | head -n 60); do
+		v=$(grep -h "Starting Liferay" "$ldir/$f" 2>/dev/null | tail -n 1)
+		[ -n "$v" ] && break
+	done
+	if [ -z "$v" ] && [ -d "$app/standalone/log" ]; then
+		for f in $(ls -t "$app/standalone/log" 2>/dev/null | head -n 60); do
+			v=$(grep -h "Starting Liferay" "$app/standalone/log/$f" 2>/dev/null | tail -n 1)
+			[ -n "$v" ] && break
+		done
+	fi
 	echo "starting=$v"
 fi
 if [ -n "$status" ]; then
 	if sh -c "$status" >/dev/null 2>&1; then echo active=1; else echo active=0; fi
 elif [ -n "$app" ]; then
-	if ps -eo args= 2>/dev/null | awk -v a="$app" '$1 ~ /java$/ && index($0, a) { f = 1 } END { exit !f }'; then
-		echo active=1
-	else
-		echo active=0
-	fi
+	if [ -n "$jvm" ]; then echo active=1; else echo active=0; fi
 fi
 [ -n "$since" ] && echo "since=$(sh -c "$since" 2>/dev/null | head -n 1)"
-if [ "$port" -gt 0 ] 2>/dev/null && command -v curl >/dev/null 2>&1; then
-	code=000
-	for h in 127.0.0.1 "$(hostname)"; do
-		code=$(curl -s -o /dev/null -I -m 4 -w '%{http_code}' "http://$h:$port/" 2>/dev/null)
-		[ "$code" != 000 ] && break
+exit 0
+`
+
+// probeScript: $1 IP de escucha ("" = solo 127.0.0.1 y el nombre de la
+// máquina), luego los puertos. Pregunta sin proxy (en los servidores suele
+// haber http_proxy y la petición acabaría en el proxy) y para en la primera
+// respuesta de un portal listo. Saca probe=<url> <código> por intento y la
+// cabecera Liferay-Portal, que trae la versión exacta.
+const probeScript = `
+bind=$1; shift
+command -v curl >/dev/null 2>&1 || exit 0
+hosts="127.0.0.1 $(hostname 2>/dev/null)"
+[ -n "$bind" ] && hosts="$bind $hosts"
+for port in "$@"; do
+	for h in $hosts; do
+		u="http://$h:$port/"
+		out=$(curl -s -I --noproxy '*' --connect-timeout 2 -m 6 "$u" 2>/dev/null | tr -d '\r')
+		code=$(printf '%s\n' "$out" | awk 'NR == 1 && /^HTTP/ { print $2 }')
+		echo "probe=$u ${code:-000}"
+		printf '%s\n' "$out" | awk 'tolower($0) ~ /^liferay-portal:/ { sub(/^[^:]*:[ \t]*/, ""); print "portal=" $0; exit }'
+		case "${code:-000}" in 000|404|502|503|504) ;; *) exit 0 ;; esac
 	done
-	echo "http=$code"
-fi
+done
 exit 0
 `
 

@@ -65,9 +65,24 @@ func remoteErr(s *config.Server, err error) error {
 	return err
 }
 
+// learn guarda en s lo que ha averiguado la inspección: la versión (la que
+// dice el portal en marcha manda sobre la registrada) y el puerto, si el
+// portal ha respondido en otro distinto. Devuelve true si cambió algo.
+func learn(s *config.Server, info *liferay.RemoteInfo) bool {
+	changed := false
+	if info.Version != "" && info.Version != s.Version {
+		s.Version, changed = info.Version, true
+	}
+	if p := info.AnsweredPort(); p > 0 && p != s.Port {
+		s.Port, changed = p, true
+	}
+	return changed
+}
+
 // inspectRemote conecta y averigua el estado del server, y lo apunta como
-// último estado conocido (también si falla).
-func inspectRemote(ctx context.Context, s *config.Server, withVersion bool) (*ssh.Conn, *liferay.Remote, *liferay.RemoteInfo, error) {
+// último estado conocido (también si falla). Lo que aprenda de él (versión,
+// puerto) lo guarda en el registro.
+func inspectRemote(ctx context.Context, reg *config.Registry, s *config.Server, withVersion bool) (*ssh.Conn, *liferay.Remote, *liferay.RemoteInfo, error) {
 	conn, r := remoteOf(s)
 	if err := connect(ctx, s, conn); err != nil {
 		config.RecordState(s.Name, "", err)
@@ -80,6 +95,9 @@ func inspectRemote(ctx context.Context, s *config.Server, withVersion bool) (*ss
 		return nil, nil, nil, err
 	}
 	config.RecordState(s.Name, stateName(info.State), nil)
+	if learn(s, info) {
+		_ = reg.Save()
+	}
 	return conn, r, info, nil
 }
 

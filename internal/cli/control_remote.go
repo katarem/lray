@@ -13,8 +13,8 @@ import (
 
 // remoteStart lanza el arranque de un server remoto tras confirmarlo.
 // started=false si ya estaba encendido o arrancando (o si dijiste que no).
-func remoteStart(ctx context.Context, s *config.Server, yes bool) (r *liferay.Remote, started bool, err error) {
-	conn, r, info, err := inspectRemote(ctx, s, false)
+func remoteStart(ctx context.Context, reg *config.Registry, s *config.Server, yes bool) (r *liferay.Remote, started bool, err error) {
+	conn, r, info, err := inspectRemote(ctx, reg, s, s.Version == "")
 	if err != nil {
 		return nil, false, err
 	}
@@ -64,8 +64,8 @@ func remoteWaitStart(ctx context.Context, s *config.Server, r *liferay.Remote, t
 }
 
 // remoteStop para un server remoto tras confirmarlo y espera a que se apague.
-func remoteStop(ctx context.Context, s *config.Server, yes bool, timeout time.Duration) error {
-	conn, r, info, err := inspectRemote(ctx, s, false)
+func remoteStop(ctx context.Context, reg *config.Registry, s *config.Server, yes bool, timeout time.Duration) error {
+	conn, r, info, err := inspectRemote(ctx, reg, s, false)
 	if err != nil {
 		return err
 	}

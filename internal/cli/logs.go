@@ -83,10 +83,10 @@ func newDev() *cobra.Command {
 		if err := view.parse(); err != nil {
 			return err
 		}
-		if _, s, err := findServer(args[0]); err != nil {
+		if reg, s, err := findServer(args[0]); err != nil {
 			return err
 		} else if s.IsRemote() {
-			return devRemote(cmd.Context(), s, yes, view, *timeout)
+			return devRemote(cmd.Context(), reg, s, yes, view, *timeout)
 		}
 		reg, s, l, err := loadServer(args[0])
 		if err != nil {
@@ -160,6 +160,7 @@ func (v *logView) interactive() bool {
 func followLogs(parent context.Context, name, detail string, src logs.Source, v logView) error {
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	defer ui.SetTitle(name + " · logs · lray")()
 
 	opts := logs.Options{Color: ui.IsTTY() && os.Getenv("NO_COLOR") == "", JSON: v.mode}
 	if v.interactive() {
@@ -204,8 +205,8 @@ func followLogs(parent context.Context, name, detail string, src logs.Source, v 
 
 // devRemote arranca un server remoto (si hace falta) y engancha sus logs. Al
 // salir pregunta si pararlo, por defecto que no: suele ser compartido.
-func devRemote(ctx context.Context, s *config.Server, yes bool, v logView, stopTimeout time.Duration) error {
-	r, started, err := remoteStart(ctx, s, yes)
+func devRemote(ctx context.Context, reg *config.Registry, s *config.Server, yes bool, v logView, stopTimeout time.Duration) error {
+	r, started, err := remoteStart(ctx, reg, s, yes)
 	if err != nil {
 		return err
 	}
@@ -226,5 +227,5 @@ func devRemote(ctx context.Context, s *config.Server, yes bool, v logView, stopT
 			ui.MutedText("Vuelve a sus logs con ")+ui.Code("lray server logs "+s.Name))
 		return nil
 	}
-	return remoteStop(ctx, s, true, stopTimeout)
+	return remoteStop(ctx, reg, s, true, stopTimeout)
 }

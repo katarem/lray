@@ -1,6 +1,11 @@
 package cli
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/katarem/lray/internal/config"
+	"github.com/katarem/lray/internal/liferay"
+)
 
 func TestParseRemoteSpec(t *testing.T) {
 	cases := []struct {
@@ -37,5 +42,22 @@ func TestParseRemoteSpec(t *testing.T) {
 		if dest != c.dest || port != c.port || path != c.path {
 			t.Errorf("%q = (%q, %d, %q), want (%q, %d, %q)", c.arg, dest, port, path, c.dest, c.port, c.path)
 		}
+	}
+}
+
+func TestLearn(t *testing.T) {
+	s := &config.Server{Name: "pre", Port: 8080, Host: "yo@pre"}
+
+	// JBoss aún desplegando (404): no se aprende el puerto.
+	if learn(s, &liferay.RemoteInfo{HTTP: 404, URL: "http://127.0.0.1:8180/"}) || s.Port != 8080 {
+		t.Errorf("con 404 no debería cambiar nada: %+v", s)
+	}
+	// El portal responde en otro puerto y dice su versión: se guardan.
+	info := &liferay.RemoteInfo{HTTP: 302, URL: "http://10.0.0.5:8180/", Version: "DXP 7.4.13 Update 92"}
+	if !learn(s, info) || s.Port != 8180 || s.Version != "DXP 7.4.13 Update 92" {
+		t.Errorf("tras aprender: %+v", s)
+	}
+	if learn(s, info) {
+		t.Error("la segunda vez no hay nada nuevo")
 	}
 }

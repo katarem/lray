@@ -85,7 +85,7 @@ func checkRemote(ctx context.Context, reg *config.Registry, s *config.Server) er
 	err := ui.RunTask(fmt.Sprintf("Comprobando «%s»", s.Name), "Comprobado",
 		func(ctx context.Context, _ func(string)) error {
 			var err error
-			info, err = r.Inspect(ctx, true)
+			info, err = r.Inspect(ctx, s.Version == "")
 			return err
 		})
 	if err != nil {
@@ -94,8 +94,7 @@ func checkRemote(ctx context.Context, reg *config.Registry, s *config.Server) er
 		return err
 	}
 	config.RecordState(s.Name, stateName(info.State), nil)
-	if info.Version != "" && info.Version != s.Version {
-		s.Version = info.Version
+	if learn(s, info) {
 		_ = reg.Save()
 	}
 
@@ -104,14 +103,22 @@ func checkRemote(ctx context.Context, reg *config.Registry, s *config.Server) er
 		ctrl = s.Remote.Control
 	}
 	port := ui.MutedText("Puerto     ") + fmt.Sprint(s.Port)
-	switch {
-	case info.HTTP > 0:
-		port += ui.MutedText(fmt.Sprintf("  (responde HTTP %d)", info.HTTP))
-	case info.HTTP == 0:
-		port += ui.MutedText("  (no responde)")
-	}
 	if info.Port != 0 && info.Port != s.Port {
 		port += ui.WarnText(fmt.Sprintf("  ojo: su configuración dice %d", info.Port))
+	}
+	if info.Bind != "" {
+		port += ui.MutedText("  escucha en " + info.Bind)
+	}
+	probe := ui.MutedText("Sonda      ")
+	switch {
+	case info.HTTP > 0:
+		probe += info.URL + ui.MutedText(fmt.Sprintf(" → HTTP %d", info.HTTP))
+	case info.HTTP == 0:
+		probe += info.URL + ui.MutedText(" → no responde")
+	case info.State == liferay.Stopped:
+		probe += ui.MutedText("— (apagado)")
+	default:
+		probe += ui.MutedText("— (sin curl en la máquina: me fío del servicio)")
 	}
 	state := stateLabel(info.State)
 	if info.Since != "" && info.State != liferay.Stopped {
@@ -126,8 +133,10 @@ func checkRemote(ctx context.Context, reg *config.Registry, s *config.Server) er
 		ui.MutedText("Máquina    ") + s.Host,
 		ui.MutedText("Home       ") + info.Home,
 		ui.MutedText("Servidor   ") + appServerLabel(info),
+		ui.MutedText("Config     ") + orDash(info.Config),
 		ui.MutedText("Versión    ") + orDash(s.Version),
 		port,
+		probe,
 		ui.MutedText("Gestión    ") + ctrl.Describe(),
 		ui.MutedText("Log        ") + orDash(info.LogFile),
 		ui.MutedText("Sesión     ") + session,
@@ -161,14 +170,14 @@ pedirte la contraseña. Se cierra sola tras un rato sin usarse
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeServers,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, s, err := findServer(args[0])
+			reg, s, err := findServer(args[0])
 			if err != nil {
 				return err
 			}
 			if !s.IsRemote() {
 				return fmt.Errorf("«%s» es local; no necesita conexión", s.Name)
 			}
-			_, _, info, err := inspectRemote(cmd.Context(), s, false)
+			_, _, info, err := inspectRemote(cmd.Context(), reg, s, s.Version == "")
 			if err != nil {
 				return err
 			}

@@ -128,6 +128,12 @@ func addRemote(cmd *cobra.Command, a remoteAdd) error {
 	_, r = remoteOf(s)
 	if fresh, err := r.Inspect(ctx, false); err == nil {
 		info.State, info.HTTP, info.LogFile = fresh.State, fresh.HTTP, fresh.LogFile
+		if fresh.Version != "" && a.version == "" {
+			s.Version = fresh.Version // la de la cabecera del portal en marcha
+		}
+		if p := fresh.AnsweredPort(); p > 0 && !a.portSet {
+			s.Port = p
+		}
 	}
 
 	reg.Put(*s)
