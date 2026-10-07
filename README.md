@@ -2,7 +2,7 @@
 
 🇪🇸 Español · [🇬🇧 English](README.en.md)
 
-Gestiona tus entornos Liferay desde la terminal, sin blade. Con `lray` puedes crear workspaces, arrancar y parar servers, seguir sus logs con colores y desplegar módulos. Te acompaña Faro, un faro pequeñito que te avisa de cómo va cada cosa.
+Gestiona tus entornos Liferay desde la terminal, sin blade. Con `lray` puedes crear workspaces y módulos, arrancar y parar servers, seguir sus logs con colores y desplegar. Te acompaña Faro, un faro pequeñito que te avisa de cómo va cada cosa.
 
 ```
 lray server init <nombre>          Crea un workspace nuevo (pregunta versión y confirma)
@@ -14,6 +14,11 @@ lray server stop <nombre>          Para el server
 lray server logs <nombre>          Logs en vivo coloreados por nivel
 lray server dev <nombre>           start + logs; al salir pregunta si apagarlo
 lray server deploy <nombre>        Compila y despliega (todo o el módulo actual)
+
+lray workspace create [nombre]     Asistente para crear un Liferay Workspace
+lray module create [nombre]        Asistente para crear un módulo (como blade create)
+
+lray update                        Comprueba si hay versión nueva y la instala
 ```
 
 ## Instalación
@@ -90,6 +95,47 @@ El asistente consulta la lista oficial de versiones de Liferay y te pregunta la 
 
 No necesita blade ni Gradle instalado: el Gradle wrapper oficial de Liferay va dentro del binario. Solo hace falta Java. La lista de versiones se guarda en caché 24 horas.
 
+También puedes crearlo con el asistente completo, que además pregunta el nombre, la carpeta y si quieres añadirlo a tu lista de servers:
+
+```sh
+lray workspace create                       # te lo pregunta todo
+lray workspace create tienda --dir ~/proyectos
+lray workspace create tienda --product dxp-2025.q2.12-lts --no-register --bundle -y   # sin preguntas
+```
+
+Lo que pases como opción ya no se pregunta. Sin terminal interactiva necesita el nombre, `--product` y `--yes`.
+
+### Crear módulos
+
+```sh
+cd ~/proyectos/tienda                       # o cualquier carpeta dentro del workspace
+lray module create                          # asistente: tipo, nombre, paquete y prefijo de clases
+lray module create carrito-web -t mvc-portlet
+lray module create carrito-api -t api -p com.tienda.carrito -c Carrito
+lray module create usuarios -t service-wrapper --service com.liferay.portal.kernel.service.UserLocalServiceWrapper
+lray module create login-jsp -t fragment --host-bundle com.liferay.login.web --host-version 6.0.0
+```
+
+Usa las mismas plantillas que `blade create`, y no necesita ni blade ni Java para generarlas. Los tipos disponibles son:
+
+| Tipo | Qué genera |
+|---|---|
+| `mvc-portlet` | Portlet con JSP sobre `MVCPortlet` |
+| `panel-app` | Portlet con su entrada y categoría en el menú de producto |
+| `api` | Interfaz Java exportada para otros módulos |
+| `service` | Componente OSGi que implementa una interfaz (`--service`) |
+| `service-builder` | Módulos `-api` y `-service` con `service.xml` |
+| `service-wrapper` | Sobrescribe un servicio de Liferay (`--service` con la clase `*Wrapper`) |
+| `rest` | Aplicación JAX-RS |
+| `fragment` | Fragmento que sobrescribe JSP de otro módulo (`--host-bundle`, `--host-version`) |
+| `control-menu-entry` | Entrada en la barra superior |
+| `portlet-configuration-icon` | Opción nueva en el menú de un portlet |
+| `template-context-contributor` | Variables para el contexto de los temas |
+
+El paquete y el prefijo de clases se proponen a partir del nombre, igual que blade (`carrito-web` → `carrito.web` y `CarritoWeb`). El módulo va a la carpeta de módulos del workspace (`liferay.workspace.modules.dir`, `modules` por defecto); con `--dir` eliges otra. Si no estás dentro de un workspace, usa `--server <nombre>` o elige uno de tu lista en el asistente.
+
+La versión de Liferay se lee del `gradle.properties` del workspace: decide si el módulo depende de `release.dxp.api` o de `release.portal.api` y, desde la 2025.Q3, genera el código para Jakarta EE (`javax` → `jakarta`), como hace blade.
+
 ### Registrar lo que ya tienes
 
 ```sh
@@ -132,6 +178,18 @@ lray server deploy tienda --clean
 
 Funciona como `blade deploy`: ejecuta `gradlew deploy` desde la carpeta en la que estés, y Gradle construye el proyecto de esa carpeta. Además añade `-Pliferay.workspace.home.dir=<home del server>` para que los JAR acaben en el `deploy/` del server que eliges. Así puedes compilar en un workspace y desplegar en otro bundle.
 
+### Actualizar lray
+
+```sh
+lray update            # busca la última release y, si es más nueva, la instala
+lray update --check    # solo comprueba
+lray update -y         # sin pedir confirmación
+```
+
+Descarga el archivo de tu sistema de la última release de GitHub, verifica su checksum con `checksums.txt` y sustituye el binario. Si lo instalaste con Homebrew te dirá que uses `brew upgrade lray`.
+
+Además, lray lo comprueba solo como mucho una vez al día y, si hay versión nueva, te avisa con una línea al terminar un comando. No avisa si la salida no es una terminal ni en builds de desarrollo, y se desactiva con `LRAY_NO_UPDATE_CHECK=1`.
+
 ## Dónde guarda las cosas
 
 | Qué | Dónde |
@@ -139,11 +197,14 @@ Funciona como `blade deploy`: ejecuta `gradlew deploy` desde la carpeta en la qu
 | Lista de servers | `~/.config/lray/servers.json` en Linux, `~/Library/Application Support/lray` en macOS, `%AppData%\lray` en Windows. Se cambia con `LRAY_HOME`. |
 | PID del server | `<liferay home>/.lray.pid` |
 | Caché de versiones | carpeta de caché del usuario, `lray/releases.json` |
+| Última versión de lray consultada | carpeta de caché del usuario, `lray/update.json` |
 
 Otras variables de entorno:
 
 - `NO_COLOR=1` desactiva los colores en `logs`.
-- `LRAY_WORKSPACE_PLUGIN_VERSION` cambia la versión del plugin de workspace que usa `init` (por defecto, la indicada en `internal/scaffold/workspace.go`). También se puede indicar con `--plugin-version`.
+- `LRAY_WORKSPACE_PLUGIN_VERSION` cambia la versión del plugin de workspace que usan `server init` y `workspace create` (por defecto, la indicada en `internal/scaffold/workspace.go`). También se puede indicar con `--plugin-version`.
+- `LRAY_NO_UPDATE_CHECK=1` desactiva el aviso de versión nueva.
+- `LRAY_REPO=otro/lray` hace que `lray update` busque las releases en un fork (igual que en `install.sh`).
 
 ## Distribuirlo
 
@@ -183,9 +244,11 @@ main.go                     punto de entrada y versión
 internal/cli/               un fichero por comando
 internal/liferay/           detección de workspace/bundle, estado, arranque, Gradle
 internal/logs/              tail -f eficiente y resaltado por nivel
-internal/scaffold/          generación de workspaces y versiones de Liferay
+internal/scaffold/          generación de workspaces y módulos, y versiones de Liferay
+internal/scaffold/templates plantillas de módulos (las de blade, embebidas en el binario)
 internal/scaffold/wrapper/  Gradle wrapper oficial (embebido en el binario)
 internal/ui/                Faro, colores, spinners y preguntas
+internal/update/            comprobación de versiones nuevas y lray update
 ```
 
 ## Limitaciones conocidas

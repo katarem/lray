@@ -17,11 +17,14 @@ import (
 	"github.com/katarem/lray/internal/config"
 	"github.com/katarem/lray/internal/liferay"
 	"github.com/katarem/lray/internal/ui"
+	"github.com/katarem/lray/internal/update"
 )
 
 // Execute ejecuta lray y devuelve el código de salida.
 func Execute(version string) int {
-	root := newRoot()
+	update.CleanupOld()
+	notifyUpdate := startUpdateCheck(version, os.Args[1:])
+	root := newRoot(version)
 	root.Version = version
 	root.SetVersionTemplate("lray {{.Version}}\n")
 	root.Flags().BoolP("version", "v", false, "Muestra la versión")
@@ -33,10 +36,11 @@ func Execute(version string) int {
 		ui.Say(ui.Sad, "No he podido hacerlo", capitalize(err.Error()))
 		return 1
 	}
+	notifyUpdate()
 	return 0
 }
 
-func newRoot() *cobra.Command {
+func newRoot(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "lray",
 		Short:         "Gestiona tus entornos Liferay desde la terminal",
@@ -44,8 +48,8 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ui.Say(ui.Happy, "¡Hola! Soy Faro.",
-				"Te ayudo a crear, arrancar y desplegar tus Liferay.",
-				"Empieza con "+ui.Code("lray server list")+" o "+ui.Code("lray server init <nombre>")+".")
+				"Te ayudo a crear workspaces y módulos, y a arrancar y desplegar tus Liferay.",
+				"Empieza con "+ui.Code("lray workspace create")+", "+ui.Code("lray module create")+" o "+ui.Code("lray server list")+".")
 			return cmd.Help()
 		},
 	}
@@ -56,6 +60,9 @@ func newRoot() *cobra.Command {
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(
 		newServer(),
+		newWorkspace(),
+		newModule(),
+		newUpdate(version),
 		newCompletion(root),
 	)
 	return root

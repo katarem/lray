@@ -1,0 +1,8 @@
+Bundle-Name: {{.Name}}-service
+Bundle-SymbolicName: {{.Package}}.service
+Bundle-Version: 1.0.0
+Liferay-Require-SchemaVersion: 1.0.0
+Liferay-Service: true
+{{- if .DSAnnotations}}
+-dsannotations-options: inherit
+{{- end}}

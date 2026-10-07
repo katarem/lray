@@ -1,0 +1,12 @@
+dependencies {
+	api project("{{.APIPath}}")
+
+	compileOnly group: "com.liferay.portal", name: "release.{{.Product}}.api"
+}
+
+buildService {
+	apiDir = "../{{.Name}}-api/src/main/java"
+	testDir = "../{{.Name}}-test/src/testIntegration/java"
+}
+
+group = "{{.Package}}"
