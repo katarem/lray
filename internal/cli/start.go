@@ -14,7 +14,7 @@ import (
 )
 
 func newStart() *cobra.Command {
-	var noWait bool
+	var noWait, yes bool
 	cmd := &cobra.Command{
 		Use:               "start <nombre>",
 		Short:             "Arranca un server y espera a que esté listo",
@@ -23,7 +23,28 @@ func newStart() *cobra.Command {
 	}
 	timeout := durationFlag(cmd, "timeout", 15*time.Minute, "Cuánto esperar como máximo al arranque")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Arrancar y volver a la terminal sin esperar")
-	cmd.RunE = func(_ *cobra.Command, args []string) error {
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Remotos: no pedir confirmación")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if reg, s, err := findServer(args[0]); err != nil {
+			return err
+		} else if s.IsRemote() {
+			r, started, err := remoteStart(cmd.Context(), reg, s, yes)
+			if err != nil || !started {
+				return err
+			}
+			if noWait {
+				ui.Say(ui.Happy, fmt.Sprintf("«%s» está arrancando", s.Name),
+					"Míralo con "+ui.Code("lray server logs "+s.Name))
+				return nil
+			}
+			if err := remoteWaitStart(cmd.Context(), s, r, *timeout); err != nil {
+				return err
+			}
+			ui.Say(ui.Party, fmt.Sprintf("«%s» está en marcha", s.Name),
+				ui.MutedText("Logs   ")+ui.Code("lray server logs "+s.Name),
+				ui.MutedText("Parar  ")+ui.Code("lray server stop "+s.Name))
+			return nil
+		}
 		reg, s, l, err := loadServer(args[0])
 		if err != nil {
 			return err
@@ -134,8 +155,15 @@ func newStop() *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeServers,
 	}
-	timeout := durationFlag(cmd, "timeout", 60*time.Second, "Cuánto esperar antes de forzar la parada")
-	cmd.RunE = func(_ *cobra.Command, args []string) error {
+	timeout := durationFlag(cmd, "timeout", 60*time.Second, "Cuánto esperar antes de forzar la parada (en remotos, antes de rendirse)")
+	var yes bool
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Remotos: no pedir confirmación")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if reg, s, err := findServer(args[0]); err != nil {
+			return err
+		} else if s.IsRemote() {
+			return remoteStop(cmd.Context(), reg, s, yes, *timeout)
+		}
 		_, s, l, err := loadServer(args[0])
 		if err != nil {
 			return err

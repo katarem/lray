@@ -7,15 +7,16 @@ import "github.com/spf13/cobra"
 func newServer() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
-		Short: "Crea, arranca, despliega y sigue los logs de tus servers Liferay",
+		Short: "Crea, arranca, despliega y sigue los logs de tus servers Liferay, locales o por SSH",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
 	cmd.AddCommand(
-		newInit(), newAdd(), newRm(), newList(),
+		newInit(), newAdd(), newRm(), newList(), newCheck(), newSet(),
 		newStart(), newStop(), newDev(), newLogs(), newDeploy(),
+		newConnect(), newDisconnect(),
 	)
 	return cmd
 }

@@ -29,11 +29,16 @@ func newRm() *cobra.Command {
 				return fmt.Errorf("no tengo ningún server llamado «%s»", name)
 			}
 			running := false
-			if l, err := liferay.Resolve(s.Path); err == nil {
-				_, running = l.PID()
+			if !s.IsRemote() {
+				if l, err := liferay.Resolve(s.Path); err == nil {
+					_, running = l.PID()
+				}
 			}
 			if !yes {
 				desc := "Solo lo quito de la lista: " + ui.ShortPath(s.Path) + " se queda donde está."
+				if s.IsRemote() {
+					desc = "Solo lo quito de la lista: en " + s.Host + " no toco nada."
+				}
 				if running {
 					desc += "\nOjo: está encendido y seguirá encendido."
 				}
@@ -50,8 +55,15 @@ func newRm() *cobra.Command {
 			if err := reg.Save(); err != nil {
 				return err
 			}
+			config.ForgetState(name)
+			again := ui.ShortPath(s.Path)
+			if s.IsRemote() {
+				conn, _ := remoteOf(s)
+				_ = conn.Disconnect()
+				again = s.Location()
+			}
 			ui.Say(ui.Thinking, fmt.Sprintf("«%s» ya no está en la lista", name),
-				"Si lo echas de menos: "+ui.Code(fmt.Sprintf("lray server add %s %s", name, ui.ShortPath(s.Path))))
+				"Si lo echas de menos: "+ui.Code(fmt.Sprintf("lray server add %s %s", name, again)))
 			return nil
 		},
 	}

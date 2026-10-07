@@ -3,6 +3,7 @@ package logs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -140,4 +141,54 @@ func trimEOL(b []byte) string {
 		n--
 	}
 	return string(b[:n])
+}
+
+// FollowReader emite las líneas que llegan por r (por ejemplo, un tail en otra
+// máquina) hasta que se acaba. Cada lectura es una ráfaga: tras ella se llama
+// a flush. Para cortarlo antes, quien llama cierra r.
+func FollowReader(ctx context.Context, r io.Reader, onLine func(string), flush func()) error {
+	buf := make([]byte, 64*1024)
+	var partial []byte
+	for {
+		n, err := r.Read(buf)
+		data := buf[:n]
+		for len(data) > 0 {
+			i := bytes.IndexByte(data, '\n')
+			if i < 0 {
+				partial = append(partial, data...)
+				break
+			}
+			line := data[:i+1]
+			if len(partial) > 0 {
+				partial = append(partial, line...)
+				line = partial
+			}
+			onLine(trimEOL(line))
+			partial = partial[:0]
+			data = data[i+1:]
+		}
+		if n > 0 {
+			flush()
+		}
+		if err != nil {
+			if len(partial) > 0 {
+				onLine(trimEOL(partial))
+				flush()
+			}
+			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+// Source produce líneas de log hasta que ctx se cancela o se acaban.
+type Source func(ctx context.Context, onLine func(string), flush func()) error
+
+// FileSource sigue un fichero local desde offset (ver Follow).
+func FileSource(path string, offset int64) Source {
+	return func(ctx context.Context, onLine func(string), flush func()) error {
+		return Follow(ctx, path, offset, onLine, flush)
+	}
 }

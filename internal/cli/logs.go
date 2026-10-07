@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/katarem/lray/internal/config"
 	"github.com/katarem/lray/internal/liferay"
 	"github.com/katarem/lray/internal/logs"
 	"github.com/katarem/lray/internal/logview"
@@ -41,6 +42,15 @@ Con --plain (o sin terminal) las líneas se imprimen seguidas, como un tail -f;
 			if err := view.parse(); err != nil {
 				return err
 			}
+			if _, s, err := findServer(args[0]); err != nil {
+				return err
+			} else if s.IsRemote() {
+				conn, r := remoteOf(s)
+				if err := connect(cmd.Context(), s, conn); err != nil {
+					return err
+				}
+				return followLogs(cmd.Context(), s.Name, s.Host+":"+r.LogPattern(), remoteFollow(s, r, lines), view)
+			}
 			_, s, l, err := loadServer(args[0])
 			if err != nil {
 				return err
@@ -49,7 +59,7 @@ Con --plain (o sin terminal) las líneas se imprimen seguidas, como un tail -f;
 				return liferay.ErrNoBundle
 			}
 			path := l.LogFile()
-			return followLogs(cmd.Context(), s.Name, path, logs.StartOffset(path, lines), view)
+			return followLogs(cmd.Context(), s.Name, ui.ShortPath(path), logs.FileSource(path, logs.StartOffset(path, lines)), view)
 		},
 	}
 	cmd.Flags().IntVarP(&lines, "lines", "n", 100, "Líneas anteriores que mostrar al engancharse")
@@ -59,6 +69,7 @@ Con --plain (o sin terminal) las líneas se imprimen seguidas, como un tail -f;
 
 func newDev() *cobra.Command {
 	var view logView
+	var yes bool
 	cmd := &cobra.Command{
 		Use:               "dev <nombre>",
 		Short:             "Arranca el server y te enseña sus logs en directo (start + logs)",
@@ -67,9 +78,15 @@ func newDev() *cobra.Command {
 	}
 	timeout := durationFlag(cmd, "stop-timeout", 60*time.Second, "Al salir, cuánto esperar antes de forzar la parada")
 	view.flags(cmd)
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Remotos: no pedir confirmación para arrancarlo")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := view.parse(); err != nil {
 			return err
+		}
+		if reg, s, err := findServer(args[0]); err != nil {
+			return err
+		} else if s.IsRemote() {
+			return devRemote(cmd.Context(), reg, s, yes, view, *timeout)
 		}
 		reg, s, l, err := loadServer(args[0])
 		if err != nil {
@@ -84,7 +101,7 @@ func newDev() *cobra.Command {
 			path = l.LogFile()
 			offset = logs.StartOffset(path, 50)
 		}
-		if err := followLogs(cmd.Context(), s.Name, path, offset, view); err != nil {
+		if err := followLogs(cmd.Context(), s.Name, ui.ShortPath(path), logs.FileSource(path, offset), view); err != nil {
 			return err
 		}
 
@@ -139,22 +156,23 @@ func (v *logView) interactive() bool {
 }
 
 // followLogs abre el visor (o pinta el log seguido) hasta que el usuario salga
-// con q o Ctrl+C.
-func followLogs(parent context.Context, name, path string, offset int64, v logView) error {
+// con q o Ctrl+C. detail es lo que se enseña como origen (ruta o host:ruta).
+func followLogs(parent context.Context, name, detail string, src logs.Source, v logView) error {
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	defer ui.SetTitle(name + " · logs · lray")()
 
 	opts := logs.Options{Color: ui.IsTTY() && os.Getenv("NO_COLOR") == "", JSON: v.mode}
 	if v.interactive() {
 		return logview.Run(ctx, logview.Config{
 			Title:  "logs de «" + name + "»",
-			Detail: ui.ShortPath(path),
+			Detail: detail,
 			Filter: v.filter,
 			Render: opts,
-		}, path, offset)
+		}, src)
 	}
 
-	ui.Header("logs de «"+name+"»", ui.ShortPath(path)+"   Ctrl+C para salir")
+	ui.Header("logs de «"+name+"»", detail+"   Ctrl+C para salir")
 	g := logs.NewGrouper()
 	r := logs.NewRenderer(opts)
 	w := bufio.NewWriterSize(os.Stdout, 64*1024)
@@ -175,7 +193,7 @@ func followLogs(parent context.Context, name, path string, offset int64, v logVi
 			w.WriteByte('\n')
 		}
 	}
-	err := logs.Follow(ctx, path, offset, func(line string) { emit(g.Add(line)) }, func() {
+	err := src(ctx, func(line string) { emit(g.Add(line)) }, func() {
 		emit(g.Flush())
 		_ = w.Flush()
 	})
@@ -183,4 +201,31 @@ func followLogs(parent context.Context, name, path string, offset int64, v logVi
 	_ = w.Flush()
 	fmt.Println()
 	return err
+}
+
+// devRemote arranca un server remoto (si hace falta) y engancha sus logs. Al
+// salir pregunta si pararlo, por defecto que no: suele ser compartido.
+func devRemote(ctx context.Context, reg *config.Registry, s *config.Server, yes bool, v logView, stopTimeout time.Duration) error {
+	r, started, err := remoteStart(ctx, reg, s, yes)
+	if err != nil {
+		return err
+	}
+	lines := 50
+	if started {
+		lines = 0
+	}
+	if err := followLogs(ctx, s.Name, s.Host+":"+r.LogPattern(), remoteFollow(s, r, lines), v); err != nil {
+		return err
+	}
+	if !ui.IsTTY() || controlOf(s).StopCommand() == "" {
+		return nil
+	}
+	stop, err := ui.Confirm(fmt.Sprintf("¿Apago también «%s»?", s.Name),
+		"Está en "+s.Host+"; si no, seguirá encendido.", false)
+	if err != nil || !stop {
+		ui.Say(ui.Happy, fmt.Sprintf("«%s» sigue encendido", s.Name),
+			ui.MutedText("Vuelve a sus logs con ")+ui.Code("lray server logs "+s.Name))
+		return nil
+	}
+	return remoteStop(ctx, reg, s, true, stopTimeout)
 }

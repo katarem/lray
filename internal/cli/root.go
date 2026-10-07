@@ -114,15 +114,27 @@ func newCompletion(root *cobra.Command) *cobra.Command {
 
 // ------------------------------------------------------------- utilidades
 
-// loadServer busca un server registrado y resuelve su layout.
-func loadServer(name string) (*config.Registry, *config.Server, *liferay.Layout, error) {
+// findServer busca un server registrado, local o remoto.
+func findServer(name string) (*config.Registry, *config.Server, error) {
 	reg, err := config.Load()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	s, ok := reg.Get(name)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("no tengo ningún server llamado «%s». Revisa los nombres con %s", name, ui.Code("lray server list"))
+		return nil, nil, fmt.Errorf("no tengo ningún server llamado «%s». Revisa los nombres con %s", name, ui.Code("lray server list"))
+	}
+	return reg, s, nil
+}
+
+// loadServer busca un server local registrado y resuelve su layout.
+func loadServer(name string) (*config.Registry, *config.Server, *liferay.Layout, error) {
+	reg, s, err := findServer(name)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if s.IsRemote() {
+		return nil, nil, nil, fmt.Errorf("«%s» es un server remoto (%s) y esto de momento solo funciona con servers locales", name, s.Host)
 	}
 	l, err := liferay.Resolve(s.Path)
 	if err != nil {
@@ -156,7 +168,7 @@ func completeServers(_ *cobra.Command, args []string, _ string) ([]string, cobra
 // whoUsesPort busca qué server registrado y encendido usa ese puerto.
 func whoUsesPort(reg *config.Registry, except string, port int) string {
 	for _, s := range reg.Servers {
-		if s.Name == except {
+		if s.Name == except || s.IsRemote() {
 			continue
 		}
 		l, err := liferay.Resolve(s.Path)

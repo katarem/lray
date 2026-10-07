@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // Server es un entorno Liferay registrado con un nombre.
@@ -19,6 +20,123 @@ type Server struct {
 	Version  string `json:"version,omitempty"`
 	JavaHome string `json:"javaHome,omitempty"`
 	Port     int    `json:"port,omitempty"` // puerto HTTP asignado al añadirlo (se aplica tras initBundle)
+
+	// Host es el destino SSH (usuario@máquina o un alias de ~/.ssh/config).
+	// Vacío = server local; si no, Path es la ruta en la máquina remota.
+	Host   string  `json:"host,omitempty"`
+	Remote *Remote `json:"remote,omitempty"`
+}
+
+// IsRemote indica si el server vive en otra máquina (por SSH).
+func (s *Server) IsRemote() bool { return s.Host != "" }
+
+// Location es la ruta tal y como se enseña: host:ruta en los remotos.
+func (s *Server) Location() string {
+	if s.IsRemote() {
+		return s.Host + ":" + s.Path
+	}
+	return s.Path
+}
+
+// Remote son los datos que solo tienen los servers remotos.
+type Remote struct {
+	SSHPort int     `json:"sshPort,omitempty"`
+	Log     string  `json:"log,omitempty"` // patrón de logs, relativo al liferay home si no es absoluto
+	Control Control `json:"control"`
+}
+
+// Tipos de gestión de un server remoto.
+const (
+	ControlNone    = ""        // lray no lo arranca ni lo para
+	ControlSystemd = "systemd" // systemctl start|stop|is-active <service>
+	ControlService = "service" // service <service> start|stop|status (init.d)
+	ControlCustom  = "custom"  // comandos propios
+)
+
+// Control dice cómo se arranca, se para y se consulta un server remoto.
+type Control struct {
+	Kind    string `json:"kind,omitempty"`
+	Service string `json:"service,omitempty"`
+	Start   string `json:"start,omitempty"` // solo con kind custom
+	Stop    string `json:"stop,omitempty"`
+	Status  string `json:"status,omitempty"` // éxito (código 0) = encendido
+	Sudo    bool   `json:"sudo,omitempty"`   // anteponer sudo a start y stop
+}
+
+// StartCommand es el comando de arranque, con sudo si hace falta; "" si
+// lray no sabe arrancarlo.
+func (c Control) StartCommand() string { return c.withSudo(c.action("start", c.Start)) }
+
+// StopCommand es el comando de parada, con sudo si hace falta.
+func (c Control) StopCommand() string { return c.withSudo(c.action("stop", c.Stop)) }
+
+// StatusCommand comprueba si está encendido (sin sudo: no puede preguntar
+// la contraseña). "" = buscar el proceso.
+func (c Control) StatusCommand() string {
+	switch c.Kind {
+	case ControlSystemd:
+		return "systemctl is-active --quiet " + ShellQuote(c.Service)
+	case ControlService:
+		return "service " + ShellQuote(c.Service) + " status"
+	case ControlCustom:
+		return c.Status
+	}
+	return ""
+}
+
+// SinceCommand imprime desde cuándo está activo (solo systemd).
+func (c Control) SinceCommand() string {
+	if c.Kind == ControlSystemd {
+		return "systemctl show -p ActiveEnterTimestamp " + ShellQuote(c.Service)
+	}
+	return ""
+}
+
+// Describe resume la gestión para enseñarla.
+func (c Control) Describe() string {
+	switch c.Kind {
+	case ControlSystemd:
+		return "systemd · " + c.Service + sudoNote(c.Sudo)
+	case ControlService:
+		return "service · " + c.Service + sudoNote(c.Sudo)
+	case ControlCustom:
+		return "comandos propios" + sudoNote(c.Sudo)
+	}
+	return "sin gestionar (solo estado y logs)"
+}
+
+func sudoNote(sudo bool) string {
+	if sudo {
+		return " (con sudo)"
+	}
+	return ""
+}
+
+func (c Control) action(verb, custom string) string {
+	switch c.Kind {
+	case ControlSystemd:
+		return "systemctl " + verb + " " + ShellQuote(c.Service)
+	case ControlService:
+		return "service " + ShellQuote(c.Service) + " " + verb
+	case ControlCustom:
+		return custom
+	}
+	return ""
+}
+
+func (c Control) withSudo(cmd string) string {
+	if cmd == "" || !c.Sudo {
+		return cmd
+	}
+	return "sudo " + cmd
+}
+
+// ShellQuote protege s para pasarlo a sh como una sola palabra.
+func ShellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Registry es la lista de servers persistida en disco.
