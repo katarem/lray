@@ -13,7 +13,6 @@ Guidance for Claude Code (and humans) working in this repository.
 ## Commands
 
 ```sh
-go mod tidy          # first time only: go.sum is not committed yet
 go vet ./...         # what CI runs (with go build) on Linux, macOS and Windows
 go build ./...
 make build           # bin/lray with version from git describe
@@ -83,6 +82,5 @@ Push a `v*` tag → `.github/workflows/release.yml` runs GoReleaser: builds linu
 
 - The module path is `github.com/katarem/lray`. If the repo ever moves, update `go.mod`, every internal import, the `install.sh` default `LRAY_REPO` and `.goreleaser.yaml` together.
 - Install methods only work once a `v*` release exists; Homebrew also needs the `katarem/homebrew-tap` repo and the `HOMEBREW_TAP_TOKEN` secret.
-- `go.sum` is not committed; run `go mod tidy` before the first build.
 - Only Gradle workspaces are supported (no Maven).
 - Windows support is less tested than Linux/macOS.

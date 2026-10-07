@@ -56,7 +56,6 @@ Necesitas Go 1.23 o superior.
 
 ```sh
 git clone https://github.com/katarem/lray && cd lray
-go mod tidy          # la primera vez: genera go.sum
 make install         # compila e instala en ~/.local/bin
 ```
 
@@ -150,17 +149,10 @@ Otras variables de entorno:
 
 ### Preparar el repositorio (una sola vez)
 
-1. Genera `go.sum` y súbelo junto al resto:
-
-   ```sh
-   go mod tidy
-   git add go.sum && git commit -m "chore: add go.sum" && git push
-   ```
-
-2. Si quieres Homebrew, sigue estos pasos. Si no, borra el bloque `brews` de `.goreleaser.yaml`.
-   - Crea un repo público vacío llamado `homebrew-tap`.
-   - Crea un *fine-grained token* con permiso *Contents: Read and write* solo sobre ese repo.
-   - Guárdalo en el repo de `lray` como secreto `HOMEBREW_TAP_TOKEN` (*Settings → Secrets and variables → Actions*).
+Si quieres Homebrew, sigue estos pasos. Si no, borra el bloque `brews` de `.goreleaser.yaml`.
+- Crea un repo público vacío llamado `homebrew-tap`.
+- Crea un *fine-grained token* con permiso *Contents: Read and write* solo sobre ese repo.
+- Guárdalo en el repo de `lray` como secreto `HOMEBREW_TAP_TOKEN` (*Settings → Secrets and variables → Actions*).
 
 ### Publicar una versión
 
