@@ -99,6 +99,11 @@ func startServer(reg *config.Registry, s *config.Server, l *liferay.Layout) (sta
 		if !l.HasBundle() {
 			return startResult{}, errors.New("initBundle terminó pero no encuentro la carpeta tomcat del bundle")
 		}
+		if s.Port != 0 && l.Port() != s.Port {
+			if err := l.SetPort(s.Port); err != nil {
+				return startResult{}, fmt.Errorf("no he podido poner el puerto %d en el server.xml: %w", s.Port, err)
+			}
+		}
 	}
 
 	if port := l.Port(); liferay.PortInUse(port) {

@@ -103,6 +103,8 @@ Acepta la raíz de un workspace, la carpeta `bundles` o la carpeta `tomcat-*`. L
 
 `--java` guarda un JAVA_HOME propio para ese server. Se usa al arrancarlo, al compilar y en `initBundle`, así que puedes tener a la vez una 7.2 con Java 8/11 y una trimestral con Java 21.
 
+Al añadirlo, lray comprueba que su puerto HTTP (y el de apagado) esté libre en la máquina y que no lo tenga otro server de la lista. Si está ocupado, le asigna el siguiente libre (8081, 8082…) y desplaza todos los puertos del `server.xml` la misma cantidad. Con `--port 9080` eliges tú el puerto. En un workspace sin bundle, el puerto se guarda y se aplica tras `initBundle`.
+
 ### Arrancar, parar y ver logs
 
 ```sh

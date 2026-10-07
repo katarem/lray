@@ -18,6 +18,7 @@ type Server struct {
 	Path     string `json:"path"`
 	Version  string `json:"version,omitempty"`
 	JavaHome string `json:"javaHome,omitempty"`
+	Port     int    `json:"port,omitempty"` // puerto HTTP asignado al añadirlo (se aplica tras initBundle)
 }
 
 // Registry es la lista de servers persistida en disco.

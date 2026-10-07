@@ -105,6 +105,8 @@ It accepts a workspace root, the `bundles` folder or the `tomcat-*` folder. The 
 
 `--java` stores a dedicated JAVA_HOME for that server. It is used to start it, to build and for `initBundle`, so you can run a 7.2 with Java 8/11 and a quarterly release with Java 21 side by side.
 
+When adding it, lray checks that its HTTP port (and shutdown port) is free on the machine and not taken by another registered server. If it is busy, it picks the next free one (8081, 8082…) and shifts every port in `server.xml` by the same amount. Use `--port 9080` to choose it yourself. For a workspace without a bundle, the port is stored and applied after `initBundle`.
+
 ### Start, stop and read logs
 
 ```sh

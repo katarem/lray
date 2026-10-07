@@ -99,11 +99,11 @@ func (l *Layout) Port() int {
 	if l.port != 0 {
 		return l.port
 	}
-	l.port = 8080
+	l.port = DefaultPort
 	if l.Tomcat == "" {
 		return l.port
 	}
-	data, err := os.ReadFile(filepath.Join(l.Tomcat, "conf", "server.xml"))
+	data, err := os.ReadFile(l.serverXML())
 	if err != nil {
 		return l.port
 	}
