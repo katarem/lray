@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -26,13 +25,16 @@ func newLogs() *cobra.Command {
 		Short: "Engancha la terminal a los logs del server, coloreados por nivel",
 		Long: `Engancha la terminal a los logs del server, coloreados por nivel.
 
-Los stack traces y el JSON se agrupan con la línea a la que pertenecen. El JSON
-se indenta y colorea (--json), --collapse los resume en una línea y -i abre un
-visor a pantalla completa donde se pliegan y despliegan con Enter.`,
+Abre un visor a pantalla completa que sigue el log en vivo: los stack traces y
+el JSON se agrupan con la línea a la que pertenecen y se pliegan y despliegan
+con Enter. El JSON se indenta y colorea (--json).
+
+Con --plain (o sin terminal) las líneas se imprimen seguidas, como un tail -f;
+--collapse resume ahí cada stack trace o JSON en una línea.`,
 		Example: `  lray server logs tienda
   lray server logs tienda -n 500 --level warn
-  lray server logs tienda --only error,debug --collapse
-  lray server logs tienda -i`,
+  lray server logs tienda --only error,debug
+  lray server logs tienda --plain --collapse`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeServers,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -103,8 +105,8 @@ func newDev() *cobra.Command {
 
 // logView reúne las opciones de visualización que comparten logs y dev.
 type logView struct {
-	level, only, json     string
-	collapse, interactive bool
+	level, only, json string
+	collapse, plain   bool
 
 	filter logs.Filter
 	mode   logs.JSONMode
@@ -115,8 +117,8 @@ func (v *logView) flags(cmd *cobra.Command) {
 	f.StringVar(&v.level, "level", os.Getenv("LRAY_LOGS_LEVEL"), "Nivel mínimo: trace, debug, info, warn o error")
 	f.StringVar(&v.only, "only", "", "Solo estos niveles, separados por comas (p. ej. error,debug)")
 	f.StringVar(&v.json, "json", os.Getenv("LRAY_LOGS_JSON"), "Formato del JSON: pretty (indentado, por defecto), compact o raw")
-	f.BoolVarP(&v.collapse, "collapse", "c", false, "Resume stack traces y JSON en una línea")
-	f.BoolVarP(&v.interactive, "interactive", "i", false, "Visor a pantalla completa con entradas plegables")
+	f.BoolVarP(&v.plain, "plain", "p", false, "Imprime las líneas seguidas en la terminal en vez de abrir el visor")
+	f.BoolVarP(&v.collapse, "collapse", "c", false, "Con --plain, resume stack traces y JSON en una línea (implica --plain)")
 }
 
 func (v *logView) parse() error {
@@ -127,20 +129,23 @@ func (v *logView) parse() error {
 	if v.mode, err = logs.ParseJSONMode(v.json); err != nil {
 		return err
 	}
-	if v.interactive && !ui.IsTTY() {
-		return errors.New("el visor interactivo (-i) necesita una terminal")
-	}
 	return nil
 }
 
-// followLogs pinta el log en vivo hasta que el usuario pulse Ctrl+C (o salga
-// del visor interactivo).
+// interactive indica si se abre el visor: por defecto sí, salvo con --plain,
+// --collapse o sin terminal (tuberías, scripts).
+func (v *logView) interactive() bool {
+	return !v.plain && !v.collapse && ui.IsTTY()
+}
+
+// followLogs abre el visor (o pinta el log seguido) hasta que el usuario salga
+// con q o Ctrl+C.
 func followLogs(parent context.Context, name, path string, offset int64, v logView) error {
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	opts := logs.Options{Color: ui.IsTTY() && os.Getenv("NO_COLOR") == "", JSON: v.mode}
-	if v.interactive {
+	if v.interactive() {
 		return logview.Run(ctx, logview.Config{
 			Title:  "logs de «" + name + "»",
 			Detail: ui.ShortPath(path),
