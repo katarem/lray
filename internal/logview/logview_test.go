@@ -162,3 +162,63 @@ func TestBurstOfKeys(t *testing.T) {
 		t.Errorf("las teclas seguidas deberían contar una a una:\n%s", s)
 	}
 }
+
+func TestMouse(t *testing.T) {
+	m := newModel(Config{})
+	send(m, tea.WindowSizeMsg{Width: 100, Height: 12},
+		entries(append(stack, "2025-06-01 10:00:01.000 INFO  [main][X:1] después")...))
+	// Fila 0: cabecera del error; fila 1: su resumen; fila 2: "después".
+	send(m, tea.MouseMsg{X: 5, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if s := screen(m); !strings.Contains(s, "a.B.d") || !strings.Contains(s, "en pausa") || m.cursor != 0 {
+		t.Fatalf("el clic debería seleccionar y desplegar el error:\n%s", s)
+	}
+	send(m, tea.MouseMsg{X: 5, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if s := screen(m); strings.Contains(s, "a.B.d") {
+		t.Errorf("otro clic debería plegarlo:\n%s", s)
+	}
+	send(m, tea.MouseMsg{X: 5, Y: 9, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if m.cursor != 0 {
+		t.Errorf("un clic en una fila vacía no debería cambiar la selección (cursor %d)", m.cursor)
+	}
+}
+
+func TestWheel(t *testing.T) {
+	m := newModel(Config{})
+	var lines []string
+	for i := 0; i < 50; i++ {
+		lines = append(lines, fmt.Sprintf("2025-06-01 10:00:%02d.000 INFO  [main][X:1] línea %d", i%60, i))
+	}
+	send(m, tea.WindowSizeMsg{Width: 80, Height: 10}, entries(lines...))
+	send(m, tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress})
+	if s := screen(m); strings.Contains(s, "línea 49") || !strings.Contains(s, "en pausa") {
+		t.Fatalf("la rueda hacia arriba debería subir y pausar:\n%s", s)
+	}
+	send(m, tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if s := screen(m); !strings.Contains(s, "línea 49") || !strings.Contains(s, "en vivo") {
+		t.Errorf("la rueda hacia abajo debería volver al final:\n%s", s)
+	}
+}
+
+func TestCopy(t *testing.T) {
+	m := newModel(Config{Render: logs.Options{Color: true}})
+	var got string
+	m.copy = func(s string) error { got = s; return nil }
+	send(m, tea.WindowSizeMsg{Width: 100, Height: 12},
+		entries(`2025-06-01 10:00:00.000 INFO  [main][X:1] Respuesta: {"a":1,"b":2}`))
+	_, cmd := m.Update(key("y"))
+	if cmd == nil {
+		t.Fatal("y debería copiar")
+	}
+	send(m, cmd())
+	want := "2025-06-01 10:00:00.000 INFO  [main][X:1] Respuesta:\n  {\n    \"a\": 1,\n    \"b\": 2\n  }"
+	if got != want {
+		t.Errorf("copiado %q; quiero %q", got, want)
+	}
+	if s := screen(m); !strings.Contains(s, "Copiada al portapapeles (5 líneas)") {
+		t.Errorf("falta el aviso:\n%s", s)
+	}
+	send(m, noticeDoneMsg(m.noticeN))
+	if s := screen(m); strings.Contains(s, "Copiada") {
+		t.Errorf("el aviso debería desaparecer:\n%s", s)
+	}
+}

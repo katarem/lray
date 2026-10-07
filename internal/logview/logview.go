@@ -6,9 +6,13 @@ package logview
 import (
 	"context"
 	"errors"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/atotto/clipboard"
+	"github.com/aymanbagabas/go-osc52/v2"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -33,7 +37,7 @@ func Run(parent context.Context, cfg Config, path string, offset int64) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	p := tea.NewProgram(newModel(cfg), tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(newModel(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -61,7 +65,14 @@ func Run(parent context.Context, cfg Config, path string, offset int64) error {
 	return err
 }
 
-type entriesMsg []*logs.Entry
+type (
+	entriesMsg []*logs.Entry
+	copiedMsg  struct {
+		lines int
+		err   error
+	}
+	noticeDoneMsg int
+)
 
 type item struct {
 	e       *logs.Entry
@@ -84,12 +95,23 @@ type model struct {
 	follow  bool
 	expand  bool // estado de las entradas nuevas
 	unseen  int  // entradas nuevas mientras no se sigue el final
+	notice  string
+	noticeN int // para que solo borre el aviso el temporizador del último
+	plain   *logs.Renderer
+	copy    func(string) error
 	width   int
 	height  int
 }
 
 func newModel(cfg Config) *model {
-	return &model{cfg: cfg, r: logs.NewRenderer(cfg.Render), filter: cfg.Filter, follow: true}
+	return &model{
+		cfg:    cfg,
+		r:      logs.NewRenderer(cfg.Render),
+		plain:  logs.NewRenderer(logs.Options{JSON: cfg.Render.JSON}),
+		copy:   copyToClipboard,
+		filter: cfg.Filter,
+		follow: true,
+	}
 }
 
 func (m *model) Init() tea.Cmd { return nil }
@@ -101,6 +123,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settle()
 	case entriesMsg:
 		m.append(msg)
+	case tea.MouseMsg:
+		m.mouse(msg)
+	case copiedMsg:
+		if msg.err != nil {
+			return m, m.say("✘ No he podido copiar: " + msg.err.Error())
+		}
+		return m, m.say("✔ Copiada al portapapeles (" + plural(msg.lines, "línea", "líneas") + ")")
+	case noticeDoneMsg:
+		if int(msg) == m.noticeN {
+			m.notice = ""
+		}
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 && !msg.Paste {
 			// Teclas pulsadas muy seguidas llegan juntas: una a una.
@@ -138,9 +171,82 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setAll(msg.String() == "e")
 		case "l":
 			m.cycleLevel()
+		case "y":
+			return m, m.copySelected()
 		}
 	}
 	return m, nil
+}
+
+// mouse: la rueda desplaza y un clic selecciona la entrada y la pliega o
+// despliega.
+func (m *model) mouse(msg tea.MouseMsg) {
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp:
+		m.scroll(-3)
+	case msg.Button == tea.MouseButtonWheelDown:
+		m.scroll(3)
+	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+		if i, ok := m.entryAt(msg.Y); ok {
+			m.follow = m.follow && i == len(m.visible)-1
+			m.cursor = i
+			m.toggle()
+		}
+	}
+}
+
+// entryAt devuelve la entrada pintada en la fila y de la pantalla.
+func (m *model) entryAt(y int) (int, bool) {
+	row := 0
+	for i := m.top; i < len(m.visible) && row < m.viewHeight(); i++ {
+		n := m.rowCount(i)
+		if i == m.top {
+			n -= m.skip
+		}
+		if y < row+n {
+			return i, y >= 0
+		}
+		row += n
+	}
+	return 0, false
+}
+
+// copySelected copia la entrada seleccionada entera, sin colores y con el
+// JSON ya formateado.
+func (m *model) copySelected() tea.Cmd {
+	it := m.at(m.cursor)
+	if it == nil {
+		return nil
+	}
+	b := m.plain.Render(it.e)
+	text := strings.Join(append([]string{b.Head}, b.Body...), "\n")
+	lines, copyFn := 1+len(b.Body), m.copy
+	return func() tea.Msg { return copiedMsg{lines: lines, err: copyFn(text)} }
+}
+
+// copyToClipboard usa el portapapeles del sistema y, además, la secuencia
+// OSC 52, que la terminal entiende aunque lray corra por SSH.
+func copyToClipboard(text string) error {
+	seq := osc52.New(text)
+	switch {
+	case os.Getenv("TMUX") != "":
+		seq = seq.Tmux()
+	case strings.HasPrefix(os.Getenv("TERM"), "screen"):
+		seq = seq.Screen()
+	}
+	_, oscErr := seq.WriteTo(os.Stderr)
+	if err := clipboard.WriteAll(text); err != nil && oscErr != nil {
+		return err
+	}
+	return nil
+}
+
+// say enseña un aviso en la barra de estado durante unos segundos.
+func (m *model) say(text string) tea.Cmd {
+	m.notice = text
+	m.noticeN++
+	n := m.noticeN
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return noticeDoneMsg(n) })
 }
 
 // ---- datos ----
@@ -420,13 +526,15 @@ func (m *model) scroll(n int) {
 	if len(m.visible) == 0 {
 		return
 	}
-	if n < 0 {
+	top, skip := m.top, m.skip
+	m.scrollRows(n)
+	if n < 0 && (m.top != top || m.skip != skip) {
 		m.follow = false
 	}
-	m.scrollRows(n)
 	first, last := m.onScreen()
 	m.cursor = min(max(m.cursor, first), last)
-	if n > 0 && m.cursor == len(m.visible)-1 && m.rowsUntilEnd(m.cursor) <= m.viewHeight() {
+	if bt, bs := m.bottom(len(m.visible) - 1); n > 0 && m.top == bt && m.skip == bs {
+		// Ha llegado al final: vuelve a seguir el log en vivo.
 		m.follow = true
 		m.settle()
 	}
@@ -559,7 +667,10 @@ func (m *model) status() string {
 	left := ui.Badge("lray") + " " + ui.Bold(m.cfg.Title) + "  " +
 		ui.MutedText(m.filter.String()+" · "+plural(len(m.visible), "entrada", "entradas"))
 	right := liveSt.Render("● en vivo")
-	if !m.follow {
+	switch {
+	case m.notice != "":
+		right = pausedSt.Render(m.notice)
+	case !m.follow:
 		right = pausedSt.Render("‖ en pausa")
 		if m.unseen > 0 {
 			right += pausedSt.Render(" · " + plural(m.unseen, "nueva", "nuevas") + " (G)")
@@ -574,7 +685,7 @@ func (m *model) status() string {
 }
 
 func (m *model) help() string {
-	return ansi.Truncate(ui.MutedText(" ↑↓ moverse · ⏎/espacio plegar · e/c todo · l nivel · g/G inicio/final · q salir  "+m.cfg.Detail), m.width, "…")
+	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · y copiar · l nivel · g/G inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
 }
 
 func plural(n int, one, many string) string {
