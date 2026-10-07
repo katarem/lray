@@ -37,6 +37,82 @@ func ParseLevel(s string) (Level, error) {
 	return LevelAll, fmt.Errorf("nivel desconocido %q (usa trace, debug, info, warn o error)", s)
 }
 
+func (l Level) String() string {
+	switch l {
+	case LevelTrace:
+		return "trace"
+	case LevelDebug:
+		return "debug"
+	case LevelInfo:
+		return "info"
+	case LevelWarn:
+		return "warn"
+	case LevelError:
+		return "error"
+	}
+	return "todo"
+}
+
+// Filter decide qué niveles se ven: desde un mínimo o solo los de una lista.
+type Filter struct {
+	Min  Level
+	Only []Level // si no está vacía manda sobre Min
+}
+
+// ParseFilter combina --level (mínimo) y --only (lista separada por comas).
+func ParseFilter(min, only string) (Filter, error) {
+	lvl, err := ParseLevel(min)
+	if err != nil {
+		return Filter{}, err
+	}
+	f := Filter{Min: lvl}
+	for _, part := range strings.Split(only, ",") {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		l, err := ParseLevel(part)
+		if err != nil {
+			return Filter{}, err
+		}
+		if l != LevelAll && !f.has(l) {
+			f.Only = append(f.Only, l)
+		}
+	}
+	return f, nil
+}
+
+func (f Filter) has(l Level) bool {
+	for _, o := range f.Only {
+		if o == l {
+			return true
+		}
+	}
+	return false
+}
+
+// Allows indica si una entrada de ese nivel debe mostrarse.
+func (f Filter) Allows(l Level) bool {
+	if len(f.Only) > 0 {
+		return f.has(l)
+	}
+	return l >= f.Min
+}
+
+// String describe el filtro para la barra de estado: "≥ warn", "solo error, debug".
+func (f Filter) String() string {
+	if len(f.Only) > 0 {
+		names := make([]string, len(f.Only))
+		for i, l := range f.Only {
+			names[i] = l.String()
+		}
+		return "solo " + strings.Join(names, ", ")
+	}
+	if f.Min <= LevelTrace {
+		return "todo"
+	}
+	return "≥ " + f.Min.String()
+}
+
 // Formatos soportados (fecha opcional para cubrir Liferay 7.0):
 //
 //	Liferay: 2025-06-01 10:00:00.123 INFO  [main][StartupHelperUtil:72] mensaje
@@ -66,6 +142,7 @@ const (
 	red     = "\x1b[31m"
 	green   = "\x1b[32m"
 	yellow  = "\x1b[33m"
+	magenta = "\x1b[35m"
 	cyan    = "\x1b[36m"
 	gray    = "\x1b[90m"
 	dimRed  = "\x1b[2;31m"
@@ -87,89 +164,4 @@ var msgColor = map[Level]string{
 	LevelInfo:  "",
 	LevelDebug: gray,
 	LevelTrace: gray,
-}
-
-// Highlighter colorea líneas y filtra por nivel mínimo. Recuerda el nivel de
-// la última línea para tratar igual sus continuaciones (stack traces).
-type Highlighter struct {
-	color   bool
-	min     Level
-	last    Level
-	visible bool
-	sb      strings.Builder
-}
-
-// NewHighlighter crea un resaltador; con color=false solo filtra.
-func NewHighlighter(color bool, min Level) *Highlighter {
-	return &Highlighter{color: color, min: min, last: LevelInfo, visible: true}
-}
-
-// Format devuelve la línea lista para imprimir y si debe mostrarse.
-func (h *Highlighter) Format(line string) (string, bool) {
-	m := lineRe.FindStringSubmatch(line)
-	if m == nil {
-		return h.continuation(line), h.visible
-	}
-	lvl, err := ParseLevel(m[2])
-	if err != nil {
-		return h.continuation(line), h.visible
-	}
-	h.last = lvl
-	h.visible = lvl >= h.min
-	if !h.visible || !h.color {
-		return line, h.visible
-	}
-
-	where, msg := "", m[3]
-	if w := whereRe.FindStringSubmatch(m[3]); w != nil {
-		where, msg = w[1], w[2]
-	}
-
-	sb := &h.sb
-	sb.Reset()
-	sb.WriteString(gray)
-	sb.WriteString(m[1])
-	sb.WriteString(reset)
-	sb.WriteByte(' ')
-	sb.WriteString(badges[lvl])
-	sb.WriteByte(' ')
-	if where != "" {
-		sb.WriteString(cyan)
-		sb.WriteString(dim)
-		sb.WriteString(where)
-		sb.WriteString(reset)
-		sb.WriteByte(' ')
-	}
-	switch {
-	case strings.Contains(msg, "Server startup in"):
-		sb.WriteString(boldGrn)
-	case strings.HasPrefix(msg, "STARTED "):
-		sb.WriteString(green)
-	default:
-		sb.WriteString(msgColor[lvl])
-	}
-	sb.WriteString(msg)
-	sb.WriteString(reset)
-	return sb.String(), true
-}
-
-func (h *Highlighter) continuation(line string) string {
-	if !h.visible || !h.color {
-		return line
-	}
-	t := strings.TrimSpace(line)
-	switch {
-	case strings.HasPrefix(t, "Caused by:"):
-		return boldRed + line + reset
-	case strings.HasPrefix(t, "at ") || strings.HasPrefix(t, "... "):
-		if h.last >= LevelWarn {
-			return dimRed + line + reset
-		}
-		return gray + line + reset
-	case h.last == LevelError:
-		return red + line + reset
-	case h.last == LevelWarn:
-		return yellow + line + reset
-	}
-	return line
 }

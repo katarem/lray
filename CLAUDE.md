@@ -22,7 +22,7 @@ make cross           # binaries for all platforms in dist/, no GoReleaser
 make snapshot        # full local release in dist/ (needs goreleaser)
 ```
 
-Tests live next to the code (`internal/scaffold/module_test.go`, `internal/update/update_test.go`). If you add more, follow `~/.claude/skills/go-testing/SKILL.md` when available (teatest for Bubbletea models).
+Tests live next to the code (`internal/scaffold/module_test.go`, `internal/update/update_test.go`, `internal/logs/render_test.go`, `internal/logview/logview_test.go`). If you add more, follow `~/.claude/skills/go-testing/SKILL.md` when available (teatest for Bubbletea models).
 
 The version is injected at build time with `-ldflags "-X main.version=..."`; `go run`/`go install` builds report `dev`.
 
@@ -33,7 +33,8 @@ main.go                     entry point; holds `version`
 internal/cli/               one file per command (cobra); root.go has Execute, help template and shared helpers; server.go groups `lray server ...`, workspace.go `lray workspace ...` (+ shared workspace creation), module.go `lray module ...`, update.go `lray update` + the background check
 internal/config/            server registry (servers.json), atomic save
 internal/liferay/           workspace/bundle detection (Layout), state, start/stop, Gradle runner
-internal/logs/              efficient tail -f and per-level highlighting
+internal/logs/              efficient tail -f, grouping lines into entries, per-level highlighting, JSON formatting, level filter
+internal/logview/           full-screen log viewer (bubbletea) with collapsible entries (default view of `lray server logs`)
 internal/scaffold/          workspace + module generation, Liferay releases.json catalog
 internal/scaffold/templates/ module templates (blade's project templates as text/template), embedded (go:embed all:templates)
 internal/scaffold/wrapper/  official Gradle wrapper, embedded in the binary (go:embed all:wrapper)
@@ -41,7 +42,7 @@ internal/ui/                Faro, palette, spinners (RunTask), prompts
 internal/update/            latest-release lookup, version compare, self-update (download + checksum + replace)
 ```
 
-Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `liferay` → `logs`. `cli` → `update`. `ui`, `config`, `logs`, `scaffold` and `update` do not import other internal packages. Keep it that way: domain packages never print or prompt; that belongs to `cli` + `ui`.
+Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `logview`. `liferay` → `logs`. `logview` → `logs`, `ui`. `cli` → `update`. `ui`, `config`, `logs`, `scaffold` and `update` do not import other internal packages. Keep it that way: domain packages never print or prompt; that belongs to `cli` + `ui`.
 
 ## How it works
 
@@ -52,6 +53,7 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `
 - **Start**: Unix runs `catalina.sh start` in its own process group (Ctrl+C must not kill Tomcat). Windows runs `catalina.bat run` detached and redirects output to `catalina.out`. Readiness = `Server startup in` in `catalina.out` after the pre-start offset.
 - **Stop**: SIGTERM (Unix) / `catalina.bat stop` (Windows), then SIGKILL / `taskkill` after the timeout.
 - **Deploy**: runs the workspace `gradlew deploy` from the **current directory** (Gradle builds the project of that folder, like `blade deploy`) and adds `-Pliferay.workspace.home.dir=<server home>` so JARs land in the chosen server.
+- **Logs** (`followLogs` in `cli/logs.go`, shared by `server logs` and `server dev`): `logs.Follow` feeds a `logs.Grouper`, which turns lines into `logs.Entry` (head line + continuation lines). A continuation is an indented line, `Caused by:`/`Suppressed:`/`... `, an exception class line or a JSON bracket line; anything else (e.g. `System.out`) is its own entry inheriting the previous level. Entries close on the next head line or on `Flush` (end of each read burst). `logs.Renderer` turns an entry into a `Block` (`Head`, collapsible `Body`, one-line `Summary`): JSON at the end of the message or spanning the continuation lines is re-indented and colored (`--json pretty`, default), compacted (`compact`) or left alone (`raw`); single-key objects with a scalar value stay inline. `logs.Filter` = `--level` (minimum) or `--only` (exact list, wins). By default (TTY and no `--plain`/`--collapse`) `logview.Run` opens the viewer: alt screen, entries collapsed by default, cursor/scroll anchored by (top entry, skipped rows), follows the end until the user scrolls up (reaching the bottom resumes), max 20 000 entries. Mouse is on (`tea.WithMouseCellMotion`): click toggles the entry under the pointer (`entryAt`), wheel scrolls; native selection then needs Shift. `y` copies the selected entry rendered without color via `atotto/clipboard` plus OSC 52 (`go-osc52`, wrapped for tmux/screen) written to stderr. `--plain` (or no TTY) streams head + body to stdout instead, or head + summary with `--collapse` (which implies `--plain`).
 - **Per-server Java**: `config.Server.JavaHome` is exported as `JAVA_HOME` (and `JRE_HOME` for Tomcat) on start, stop, deploy and `initBundle`.
 - **Init**: writes `settings.gradle`, `gradle.properties`, config folders and the embedded wrapper; workspace plugin version is `scaffold.DefaultPluginVersion`, overridable with `--plugin-version` / `LRAY_WORKSPACE_PLUGIN_VERSION`. Releases come from Liferay's `releases.json` (CDN, then fallback mirrors) cached 24 h in the user cache dir; a stale cache beats no data.
 
@@ -79,6 +81,7 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `
 | `LRAY_HOME` | Overrides the config dir holding `servers.json` |
 | `LRAY_WORKSPACE_PLUGIN_VERSION` | Workspace plugin version used by `server init` / `workspace create` |
 | `NO_COLOR` | Disables colors in `logs` |
+| `LRAY_LOGS_LEVEL`, `LRAY_LOGS_JSON` | Defaults for `--level` and `--json` in `server logs` / `server dev` |
 | `LRAY_NO_UPDATE_CHECK` | Disables the daily new-version notice |
 | `LRAY_REPO` | Repo for releases: `install.sh` and `lray update` |
 | `LRAY_VERSION`, `LRAY_BIN_DIR` | `install.sh` only |

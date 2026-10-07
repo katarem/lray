@@ -11,7 +11,7 @@ lray server rm <nombre>            Lo quita de la lista (no borra archivos)
 lray server list                   Nombre, versión, estado y puerto de cada server
 lray server start <nombre>         Arranca y espera a que esté listo
 lray server stop <nombre>          Para el server
-lray server logs <nombre>          Logs en vivo coloreados por nivel
+lray server logs <nombre>          Visor de logs en vivo: colores, JSON legible, entradas plegables
 lray server dev <nombre>           start + logs; al salir pregunta si apagarlo
 lray server deploy <nombre>        Compila y despliega (todo o el módulo actual)
 
@@ -156,10 +156,24 @@ Al añadirlo, lray comprueba que su puerto HTTP (y el de apagado) esté libre en
 lray server start tienda                 # espera a "Server startup in" mostrando el progreso
 lray server start tienda --no-wait
 lray server stop tienda                  # SIGTERM ordenado; a los 60 s fuerza la parada
-lray server logs tienda                  # últimas 100 líneas y sigue en vivo
+lray server logs tienda                  # visor en vivo con las últimas 100 líneas
 lray server logs tienda -n 500 --level warn
-lray server dev tienda                   # arranca y engancha los logs
+lray server logs tienda --only error,debug
+lray server logs tienda --plain          # imprime las líneas seguidas, como un tail -f
+lray server logs tienda --collapse       # igual, con stack traces y JSON resumidos en una línea
+lray server dev tienda                   # arranca y engancha los logs (admite las mismas opciones)
 ```
+
+Cada línea de log se agrupa con lo que va debajo (el stack trace de una excepción o un JSON repartido en varias líneas); lo que no encaja, como un `System.out.println`, va aparte. Con eso:
+
+- **Niveles**: `--level warn` enseña de warn para arriba; `--only error,debug` enseña solo esos niveles (manda sobre `--level`). Niveles: `trace`, `debug`, `info`, `warn`, `error` (también valen los de Java: `fine`, `warning`, `severe`…). Para ver `debug`, Liferay tiene que estar escribiéndolos: actívalo para la categoría que te interese en *Control Panel → Server Administration → Log Levels* o con un `portal-log4j-ext.xml`.
+- **JSON**: `--json pretty` (por defecto) indenta y colorea el JSON que aparece al final de un mensaje o en las líneas de debajo; `--json compact` lo deja en una sola línea y `--json raw` no lo toca. Los objetos pequeños (una sola clave con un valor simple) se quedan en línea.
+- **Visor** (por defecto): sigue el log en vivo a pantalla completa con las entradas largas plegadas.
+  - **Ratón**: clic en una entrada para plegarla o desplegarla; la rueda desplaza. Como el visor recibe el ratón, para seleccionar texto mantén `Mayús` mientras arrastras (`⌥ Option` en iTerm2).
+  - **Teclado**: `↑`/`↓` para moverte (dentro de una entrada larga baja línea a línea), `Enter` o `espacio` para plegar/desplegar, `e`/`c` para desplegar/plegar todo, `l` para cambiar el nivel mínimo sin salir, `g`/`G` para ir al principio/final, `q` o `Ctrl+C` para salir.
+  - **Copiar**: `y` copia la entrada seleccionada entera (con su stack trace o el JSON ya formateado) al portapapeles del sistema y, además, con la secuencia OSC 52, que funciona también por SSH en las terminales que la admiten (en tmux, activa `set -g allow-passthrough on`).
+  - Al subir se pausa y te avisa de las líneas nuevas; al volver al final (`G` o bajando con la rueda) sigue en vivo.
+- **Modo texto** (`--plain`/`-p`): imprime las líneas seguidas en la terminal, así puedes usar su scroll y copiar con el ratón. Es lo que se usa automáticamente sin terminal (`| grep`, scripts). `--collapse` (implica `--plain`) cambia el cuerpo de cada entrada por una línea de resumen: el JSON compacto o la excepción con su causa raíz (`⤷`) y cuántas líneas ocupa.
 
 - **Ctrl+C**: en `start` deja de esperar pero el server sigue arrancando. En `logs` solo te desengancha. En `dev` te pregunta si apagar también el server.
 - **Bundle que falta**: si el workspace no tiene bundle, `start` te ofrece descargarlo.
@@ -202,6 +216,7 @@ Además, lray lo comprueba solo como mucho una vez al día y, si hay versión nu
 Otras variables de entorno:
 
 - `NO_COLOR=1` desactiva los colores en `logs`.
+- `LRAY_LOGS_LEVEL` y `LRAY_LOGS_JSON` dan el valor por defecto de `--level` y `--json` en `logs` y `dev` (por ejemplo, `LRAY_LOGS_JSON=compact`).
 - `LRAY_WORKSPACE_PLUGIN_VERSION` cambia la versión del plugin de workspace que usan `server init` y `workspace create` (por defecto, la indicada en `internal/scaffold/workspace.go`). También se puede indicar con `--plugin-version`.
 - `LRAY_NO_UPDATE_CHECK=1` desactiva el aviso de versión nueva.
 - `LRAY_REPO=otro/lray` hace que `lray update` busque las releases en un fork (igual que en `install.sh`).
@@ -243,7 +258,8 @@ make cross        # solo los binarios, sin GoReleaser
 main.go                     punto de entrada y versión
 internal/cli/               un fichero por comando
 internal/liferay/           detección de workspace/bundle, estado, arranque, Gradle
-internal/logs/              tail -f eficiente y resaltado por nivel
+internal/logs/              tail -f eficiente, agrupado en entradas, resaltado por nivel y formato de JSON
+internal/logview/           visor de logs a pantalla completa (lray server logs)
 internal/scaffold/          generación de workspaces y módulos, y versiones de Liferay
 internal/scaffold/templates plantillas de módulos (las de blade, embebidas en el binario)
 internal/scaffold/wrapper/  Gradle wrapper oficial (embebido en el binario)
