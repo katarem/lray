@@ -51,7 +51,7 @@ func newRm() *cobra.Command {
 				return err
 			}
 			ui.Say(ui.Thinking, fmt.Sprintf("«%s» ya no está en la lista", name),
-				"Si lo echas de menos: "+ui.Code(fmt.Sprintf("lray add %s %s", name, ui.ShortPath(s.Path))))
+				"Si lo echas de menos: "+ui.Code(fmt.Sprintf("lray server add %s %s", name, ui.ShortPath(s.Path))))
 			return nil
 		},
 	}

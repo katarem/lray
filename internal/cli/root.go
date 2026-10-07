@@ -45,7 +45,7 @@ func newRoot() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ui.Say(ui.Happy, "¡Hola! Soy Faro.",
 				"Te ayudo a crear, arrancar y desplegar tus Liferay.",
-				"Empieza con "+ui.Code("lray list")+" o "+ui.Code("lray init <nombre>")+".")
+				"Empieza con "+ui.Code("lray server list")+" o "+ui.Code("lray server init <nombre>")+".")
 			return cmd.Help()
 		},
 	}
@@ -55,8 +55,7 @@ func newRoot() *cobra.Command {
 	root.SetHelpCommand(&cobra.Command{Hidden: true, Use: "no-help"})
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(
-		newInit(), newAdd(), newRm(), newList(),
-		newStart(), newStop(), newDev(), newLogs(), newDeploy(),
+		newServer(),
 		newCompletion(root),
 	)
 	return root
@@ -116,7 +115,7 @@ func loadServer(name string) (*config.Registry, *config.Server, *liferay.Layout,
 	}
 	s, ok := reg.Get(name)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("no tengo ningún server llamado «%s». Revisa los nombres con %s", name, ui.Code("lray list"))
+		return nil, nil, nil, fmt.Errorf("no tengo ningún server llamado «%s». Revisa los nombres con %s", name, ui.Code("lray server list"))
 	}
 	l, err := liferay.Resolve(s.Path)
 	if err != nil {

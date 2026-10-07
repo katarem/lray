@@ -22,8 +22,8 @@ func newLogs() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs <nombre>",
 		Short: "Engancha la terminal a los logs del server, coloreados por nivel",
-		Example: `  lray logs tienda
-  lray logs tienda -n 500 --level warn`,
+		Example: `  lray server logs tienda
+  lray server logs tienda -n 500 --level warn`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeServers,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -86,7 +86,7 @@ func newDev() *cobra.Command {
 			"Si no, seguirá encendido en segundo plano.", false)
 		if err != nil || !stop {
 			ui.Say(ui.Happy, fmt.Sprintf("«%s» sigue encendido", s.Name),
-				ui.MutedText("Vuelve a sus logs con ")+ui.Code("lray logs "+s.Name))
+				ui.MutedText("Vuelve a sus logs con ")+ui.Code("lray server logs "+s.Name))
 			return nil
 		}
 		return stopServer(s, l, *timeout)

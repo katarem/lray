@@ -34,7 +34,7 @@ func newStart() *cobra.Command {
 		}
 		if noWait {
 			ui.Say(ui.Happy, fmt.Sprintf("«%s» está arrancando en segundo plano", s.Name),
-				"Míralo con "+ui.Code("lray logs "+s.Name))
+				"Míralo con "+ui.Code("lray server logs "+s.Name))
 			return nil
 		}
 		err = ui.RunTask(fmt.Sprintf("Arrancando «%s»", s.Name), fmt.Sprintf("«%s» arrancado", s.Name),
@@ -43,7 +43,7 @@ func newStart() *cobra.Command {
 			})
 		if errors.Is(err, ui.ErrInterrupted) {
 			ui.Say(ui.Thinking, "Dejo de esperar, pero sigue arrancando",
-				"Sigue el progreso con "+ui.Code("lray logs "+s.Name))
+				"Sigue el progreso con "+ui.Code("lray server logs "+s.Name))
 			return nil
 		}
 		if err != nil {
@@ -52,8 +52,8 @@ func newStart() *cobra.Command {
 		ui.Say(ui.Party, fmt.Sprintf("«%s» está en marcha", s.Name),
 			ui.Code(url(l.Port())),
 			"",
-			ui.MutedText("Logs   ")+ui.Code("lray logs "+s.Name),
-			ui.MutedText("Parar  ")+ui.Code("lray stop "+s.Name))
+			ui.MutedText("Logs   ")+ui.Code("lray server logs "+s.Name),
+			ui.MutedText("Parar  ")+ui.Code("lray server stop "+s.Name))
 		return nil
 	}
 	return cmd
@@ -72,7 +72,7 @@ func startServer(reg *config.Registry, s *config.Server, l *liferay.Layout) (sta
 		return startResult{}, nil
 	case liferay.Starting:
 		ui.Say(ui.Thinking, fmt.Sprintf("«%s» ya está arrancando", s.Name),
-			"Sigue el progreso con "+ui.Code("lray logs "+s.Name))
+			"Sigue el progreso con "+ui.Code("lray server logs "+s.Name))
 		return startResult{}, nil
 	}
 
@@ -109,7 +109,7 @@ func startServer(reg *config.Registry, s *config.Server, l *liferay.Layout) (sta
 	if port := l.Port(); liferay.PortInUse(port) {
 		desc := fmt.Sprintf("El puerto %d ya está en uso", port)
 		if who := whoUsesPort(reg, s.Name, port); who != "" {
-			desc += fmt.Sprintf(" por «%s» (páralo con lray stop %s)", who, who)
+			desc += fmt.Sprintf(" por «%s» (páralo con lray server stop %s)", who, who)
 		}
 		ok, err := ui.Confirm("Puerto ocupado", desc+". Si arranco igualmente, Tomcat fallará. ¿Sigo?", false)
 		if err != nil {

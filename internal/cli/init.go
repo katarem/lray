@@ -21,8 +21,8 @@ func newInit() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init <nombre>",
 		Short: "Crea un workspace de Liferay nuevo y lo añade a la lista",
-		Example: `  lray init tienda
-  lray init tienda --dir ~/proyectos --product dxp-2025.q2.12-lts`,
+		Example: `  lray server init tienda
+  lray server init tienda --dir ~/proyectos --product dxp-2025.q2.12-lts`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := args[0]
@@ -34,7 +34,7 @@ func newInit() *cobra.Command {
 				return err
 			}
 			if _, ok := reg.Get(name); ok {
-				return fmt.Errorf("ya tienes un server llamado «%s»; elige otro nombre o quítalo con lray rm %s", name, name)
+				return fmt.Errorf("ya tienes un server llamado «%s»; elige otro nombre o quítalo con lray server rm %s", name, name)
 			}
 			parent, err := filepath.Abs(dir)
 			if err != nil {
@@ -86,7 +86,7 @@ func newInit() *cobra.Command {
 			if bundle {
 				summary = append(summary, "Bundle    se descarga ahora")
 			} else {
-				summary = append(summary, "Bundle    más tarde (lray start lo ofrecerá)")
+				summary = append(summary, "Bundle    más tarde (lray server start lo ofrecerá)")
 			}
 			go_ := false
 			if err := huh.NewForm(huh.NewGroup(
@@ -119,19 +119,19 @@ func newInit() *cobra.Command {
 				if err := runInitBundle(target, javaHome); err != nil {
 					if errors.Is(err, ui.ErrInterrupted) {
 						ui.Say(ui.Thinking, "Workspace creado, descarga cancelada",
-							"Retómala cuando quieras con "+ui.Code("lray start "+name))
+							"Retómala cuando quieras con "+ui.Code("lray server start "+name))
 						return nil
 					}
 					ui.Say(ui.Worried, "El workspace está creado, pero el bundle no",
 						err.Error(),
-						"Puedes reintentarlo con "+ui.Code("lray start "+name))
+						"Puedes reintentarlo con "+ui.Code("lray server start "+name))
 					return nil
 				}
 			}
 
 			ui.Say(ui.Party, fmt.Sprintf("«%s» está listo", name),
 				ui.Code("cd "+ui.ShortPath(target)),
-				ui.Code("lray dev "+name)+ui.MutedText("    arranca y muestra los logs"))
+				ui.Code("lray server dev "+name)+ui.MutedText("    arranca y muestra los logs"))
 			return nil
 		},
 	}

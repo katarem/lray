@@ -19,9 +19,9 @@ func newAdd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <nombre> <ruta>",
 		Short: "Añade a la lista un workspace o bundle que ya tienes",
-		Example: `  lray add tienda ~/proyectos/tienda-workspace
-  lray add antiguo /opt/liferay-7.2 --java /usr/lib/jvm/java-11
-  lray add otro ~/proyectos/otro-workspace --port 9080`,
+		Example: `  lray server add tienda ~/proyectos/tienda-workspace
+  lray server add antiguo /opt/liferay-7.2 --java /usr/lib/jvm/java-11
+  lray server add otro ~/proyectos/otro-workspace --port 9080`,
 		Args: cobra.ExactArgs(2),
 		ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 1 {
@@ -69,7 +69,7 @@ func newAdd() *cobra.Command {
 			}
 			if version == "" && !yes {
 				version, err = ui.Input("¿Qué versión de Liferay es?",
-					"No la he podido detectar. Es solo informativa para lray list; puedes dejarla vacía.",
+					"No la he podido detectar. Es solo informativa para lray server list; puedes dejarla vacía.",
 					"dxp-2025.q2.12-lts")
 				if err != nil {
 					return err
@@ -126,7 +126,7 @@ func newAdd() *cobra.Command {
 				lines = append(lines, ui.MutedText("Java     ")+ui.ShortPath(javaHome))
 			}
 			if !l.HasBundle() {
-				lines = append(lines, "", ui.WarnText("Aún no tiene bundle: ")+ui.Code("lray start "+name)+" te ofrecerá descargarlo.")
+				lines = append(lines, "", ui.WarnText("Aún no tiene bundle: ")+ui.Code("lray server start "+name)+" te ofrecerá descargarlo.")
 			}
 			ui.Say(ui.Party, fmt.Sprintf("«%s» añadido", name), lines...)
 			return nil

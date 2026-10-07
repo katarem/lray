@@ -5,15 +5,15 @@
 Gestiona tus entornos Liferay desde la terminal, sin blade. Con `lray` puedes crear workspaces, arrancar y parar servers, seguir sus logs con colores y desplegar módulos. Te acompaña Faro, un faro pequeñito que te avisa de cómo va cada cosa.
 
 ```
-lray init <nombre>          Crea un workspace nuevo (pregunta versión y confirma)
-lray add <nombre> <ruta>    Añade un workspace o bundle que ya tienes
-lray rm <nombre>            Lo quita de la lista (no borra archivos)
-lray list                   Nombre, versión, estado y puerto de cada server
-lray start <nombre>         Arranca y espera a que esté listo
-lray stop <nombre>          Para el server
-lray logs <nombre>          Logs en vivo coloreados por nivel
-lray dev <nombre>           start + logs; al salir pregunta si apagarlo
-lray deploy <nombre>        Compila y despliega (todo o el módulo actual)
+lray server init <nombre>          Crea un workspace nuevo (pregunta versión y confirma)
+lray server add <nombre> <ruta>    Añade un workspace o bundle que ya tienes
+lray server rm <nombre>            Lo quita de la lista (no borra archivos)
+lray server list                   Nombre, versión, estado y puerto de cada server
+lray server start <nombre>         Arranca y espera a que esté listo
+lray server stop <nombre>          Para el server
+lray server logs <nombre>          Logs en vivo coloreados por nivel
+lray server dev <nombre>           start + logs; al salir pregunta si apagarlo
+lray server deploy <nombre>        Compila y despliega (todo o el módulo actual)
 ```
 
 ## Instalación
@@ -82,9 +82,9 @@ Con Homebrew el autocompletado ya viene instalado.
 ### Crear un workspace nuevo
 
 ```sh
-lray init tienda                     # lo crea en ./tienda
-lray init tienda --dir ~/proyectos
-lray init tienda --product dxp-2025.q2.12-lts   # salta la pregunta de versión
+lray server init tienda                     # lo crea en ./tienda
+lray server init tienda --dir ~/proyectos
+lray server init tienda --product dxp-2025.q2.12-lts   # salta la pregunta de versión
 ```
 
 El asistente consulta la lista oficial de versiones de Liferay y te pregunta la edición (DXP o Portal CE) y la versión. Las más recientes salen arriba; pulsa `/` para buscar. Después pregunta si quieres descargar ya el bundle (`initBundle`) y te enseña un resumen antes de empezar.
@@ -94,9 +94,9 @@ No necesita blade ni Gradle instalado: el Gradle wrapper oficial de Liferay va d
 ### Registrar lo que ya tienes
 
 ```sh
-lray add tienda ~/proyectos/tienda-workspace     # raíz del workspace
-lray add legacy /opt/liferay-7.2                 # bundle suelto (liferay home)
-lray add legacy /opt/liferay-7.2 --java /usr/lib/jvm/java-11
+lray server add tienda ~/proyectos/tienda-workspace     # raíz del workspace
+lray server add legacy /opt/liferay-7.2                 # bundle suelto (liferay home)
+lray server add legacy /opt/liferay-7.2 --java /usr/lib/jvm/java-11
 ```
 
 Acepta la raíz de un workspace, la carpeta `bundles` o la carpeta `tomcat-*`. La versión se detecta del `gradle.properties` o, en bundles sueltos, de la línea `Starting Liferay …` de los logs.
@@ -108,12 +108,12 @@ Al añadirlo, lray comprueba que su puerto HTTP (y el de apagado) esté libre en
 ### Arrancar, parar y ver logs
 
 ```sh
-lray start tienda                 # espera a "Server startup in" mostrando el progreso
-lray start tienda --no-wait
-lray stop tienda                  # SIGTERM ordenado; a los 60 s fuerza la parada
-lray logs tienda                  # últimas 100 líneas y sigue en vivo
-lray logs tienda -n 500 --level warn
-lray dev tienda                   # arranca y engancha los logs
+lray server start tienda                 # espera a "Server startup in" mostrando el progreso
+lray server start tienda --no-wait
+lray server stop tienda                  # SIGTERM ordenado; a los 60 s fuerza la parada
+lray server logs tienda                  # últimas 100 líneas y sigue en vivo
+lray server logs tienda -n 500 --level warn
+lray server dev tienda                   # arranca y engancha los logs
 ```
 
 - **Ctrl+C**: en `start` deja de esperar pero el server sigue arrancando. En `logs` solo te desengancha. En `dev` te pregunta si apagar también el server.
@@ -124,11 +124,11 @@ lray dev tienda                   # arranca y engancha los logs
 
 ```sh
 cd ~/proyectos/tienda-workspace
-lray deploy tienda                # todos los módulos
+lray server deploy tienda                # todos los módulos
 
 cd modules/mi-portlet
-lray deploy tienda                # solo este módulo
-lray deploy tienda --clean
+lray server deploy tienda                # solo este módulo
+lray server deploy tienda --clean
 ```
 
 Funciona como `blade deploy`: ejecuta `gradlew deploy` desde la carpeta en la que estés, y Gradle construye el proyecto de esa carpeta. Además añade `-Pliferay.workspace.home.dir=<home del server>` para que los JAR acaben en el `deploy/` del server que eliges. Así puedes compilar en un workspace y desplegar en otro bundle.
@@ -199,5 +199,5 @@ internal/ui/                Faro, colores, spinners y preguntas
 ## Limitaciones conocidas
 
 - **Workspaces Maven**: solo soporta workspaces Gradle.
-- **Servers arrancados fuera de lray** (desde el IDE, por ejemplo): `lray list` los muestra como apagados, porque se basa en el PID que guarda lray. `logs` sí funciona con ellos.
+- **Servers arrancados fuera de lray** (desde el IDE, por ejemplo): `lray server list` los muestra como apagados, porque se basa en el PID que guarda lray. `logs` sí funciona con ellos.
 - **Windows**: Tomcat se lanza con `catalina.bat run` en segundo plano y la salida se redirige a `catalina.out`. Está menos probado que en Linux y macOS.
