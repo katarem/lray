@@ -99,9 +99,9 @@ un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.`,
 			}
 			body = append(body, "")
 			if l.State() == liferay.Stopped {
-				body = append(body, ui.WarnText("El server está apagado: ")+"se instalará al arrancarlo con "+ui.Code("lray start "+s.Name))
+				body = append(body, ui.WarnText("El server está apagado: ")+"se instalará al arrancarlo con "+ui.Code("lray server start "+s.Name))
 			} else {
-				body = append(body, "Mira cómo se instalan con "+ui.Code("lray logs "+s.Name))
+				body = append(body, "Mira cómo se instalan con "+ui.Code("lray server logs "+s.Name))
 			}
 			mood := ui.Party
 			if len(deployed) == 0 {

@@ -5,15 +5,15 @@
 Gestiona tus entornos Liferay desde la terminal, sin blade. Con `lray` puedes crear workspaces, arrancar y parar servers, seguir sus logs con colores y desplegar módulos. Te acompaña Faro, un faro pequeñito que te avisa de cómo va cada cosa.
 
 ```
-lray init <nombre>          Crea un workspace nuevo (pregunta versión y confirma)
-lray add <nombre> <ruta>    Añade un workspace o bundle que ya tienes
-lray rm <nombre>            Lo quita de la lista (no borra archivos)
-lray list                   Nombre, versión, estado y puerto de cada server
-lray start <nombre>         Arranca y espera a que esté listo
-lray stop <nombre>          Para el server
-lray logs <nombre>          Logs en vivo coloreados por nivel
-lray dev <nombre>           start + logs; al salir pregunta si apagarlo
-lray deploy <nombre>        Compila y despliega (todo o el módulo actual)
+lray server init <nombre>          Crea un workspace nuevo (pregunta versión y confirma)
+lray server add <nombre> <ruta>    Añade un workspace o bundle que ya tienes
+lray server rm <nombre>            Lo quita de la lista (no borra archivos)
+lray server list                   Nombre, versión, estado y puerto de cada server
+lray server start <nombre>         Arranca y espera a que esté listo
+lray server stop <nombre>          Para el server
+lray server logs <nombre>          Logs en vivo coloreados por nivel
+lray server dev <nombre>           start + logs; al salir pregunta si apagarlo
+lray server deploy <nombre>        Compila y despliega (todo o el módulo actual)
 ```
 
 ## Instalación
@@ -56,7 +56,6 @@ Necesitas Go 1.23 o superior.
 
 ```sh
 git clone https://github.com/katarem/lray && cd lray
-go mod tidy          # la primera vez: genera go.sum
 make install         # compila e instala en ~/.local/bin
 ```
 
@@ -82,9 +81,9 @@ Con Homebrew el autocompletado ya viene instalado.
 ### Crear un workspace nuevo
 
 ```sh
-lray init tienda                     # lo crea en ./tienda
-lray init tienda --dir ~/proyectos
-lray init tienda --product dxp-2025.q2.12-lts   # salta la pregunta de versión
+lray server init tienda                     # lo crea en ./tienda
+lray server init tienda --dir ~/proyectos
+lray server init tienda --product dxp-2025.q2.12-lts   # salta la pregunta de versión
 ```
 
 El asistente consulta la lista oficial de versiones de Liferay y te pregunta la edición (DXP o Portal CE) y la versión. Las más recientes salen arriba; pulsa `/` para buscar. Después pregunta si quieres descargar ya el bundle (`initBundle`) y te enseña un resumen antes de empezar.
@@ -94,24 +93,26 @@ No necesita blade ni Gradle instalado: el Gradle wrapper oficial de Liferay va d
 ### Registrar lo que ya tienes
 
 ```sh
-lray add tienda ~/proyectos/tienda-workspace     # raíz del workspace
-lray add legacy /opt/liferay-7.2                 # bundle suelto (liferay home)
-lray add legacy /opt/liferay-7.2 --java /usr/lib/jvm/java-11
+lray server add tienda ~/proyectos/tienda-workspace     # raíz del workspace
+lray server add legacy /opt/liferay-7.2                 # bundle suelto (liferay home)
+lray server add legacy /opt/liferay-7.2 --java /usr/lib/jvm/java-11
 ```
 
 Acepta la raíz de un workspace, la carpeta `bundles` o la carpeta `tomcat-*`. La versión se detecta del `gradle.properties` o, en bundles sueltos, de la línea `Starting Liferay …` de los logs.
 
 `--java` guarda un JAVA_HOME propio para ese server. Se usa al arrancarlo, al compilar y en `initBundle`, así que puedes tener a la vez una 7.2 con Java 8/11 y una trimestral con Java 21.
 
+Al añadirlo, lray comprueba que su puerto HTTP (y el de apagado) esté libre en la máquina y que no lo tenga otro server de la lista. Si está ocupado, le asigna el siguiente libre (8081, 8082…) y desplaza todos los puertos del `server.xml` la misma cantidad. Con `--port 9080` eliges tú el puerto. En un workspace sin bundle, el puerto se guarda y se aplica tras `initBundle`.
+
 ### Arrancar, parar y ver logs
 
 ```sh
-lray start tienda                 # espera a "Server startup in" mostrando el progreso
-lray start tienda --no-wait
-lray stop tienda                  # SIGTERM ordenado; a los 60 s fuerza la parada
-lray logs tienda                  # últimas 100 líneas y sigue en vivo
-lray logs tienda -n 500 --level warn
-lray dev tienda                   # arranca y engancha los logs
+lray server start tienda                 # espera a "Server startup in" mostrando el progreso
+lray server start tienda --no-wait
+lray server stop tienda                  # SIGTERM ordenado; a los 60 s fuerza la parada
+lray server logs tienda                  # últimas 100 líneas y sigue en vivo
+lray server logs tienda -n 500 --level warn
+lray server dev tienda                   # arranca y engancha los logs
 ```
 
 - **Ctrl+C**: en `start` deja de esperar pero el server sigue arrancando. En `logs` solo te desengancha. En `dev` te pregunta si apagar también el server.
@@ -122,11 +123,11 @@ lray dev tienda                   # arranca y engancha los logs
 
 ```sh
 cd ~/proyectos/tienda-workspace
-lray deploy tienda                # todos los módulos
+lray server deploy tienda                # todos los módulos
 
 cd modules/mi-portlet
-lray deploy tienda                # solo este módulo
-lray deploy tienda --clean
+lray server deploy tienda                # solo este módulo
+lray server deploy tienda --clean
 ```
 
 Funciona como `blade deploy`: ejecuta `gradlew deploy` desde la carpeta en la que estés, y Gradle construye el proyecto de esa carpeta. Además añade `-Pliferay.workspace.home.dir=<home del server>` para que los JAR acaben en el `deploy/` del server que eliges. Así puedes compilar en un workspace y desplegar en otro bundle.
@@ -148,17 +149,10 @@ Otras variables de entorno:
 
 ### Preparar el repositorio (una sola vez)
 
-1. Genera `go.sum` y súbelo junto al resto:
-
-   ```sh
-   go mod tidy
-   git add go.sum && git commit -m "chore: add go.sum" && git push
-   ```
-
-2. Si quieres Homebrew, sigue estos pasos. Si no, borra el bloque `brews` de `.goreleaser.yaml`.
-   - Crea un repo público vacío llamado `homebrew-tap`.
-   - Crea un *fine-grained token* con permiso *Contents: Read and write* solo sobre ese repo.
-   - Guárdalo en el repo de `lray` como secreto `HOMEBREW_TAP_TOKEN` (*Settings → Secrets and variables → Actions*).
+Si quieres Homebrew, sigue estos pasos. Si no, borra el bloque `brews` de `.goreleaser.yaml`.
+- Crea un repo público vacío llamado `homebrew-tap`.
+- Crea un *fine-grained token* con permiso *Contents: Read and write* solo sobre ese repo.
+- Guárdalo en el repo de `lray` como secreto `HOMEBREW_TAP_TOKEN` (*Settings → Secrets and variables → Actions*).
 
 ### Publicar una versión
 
@@ -197,5 +191,5 @@ internal/ui/                Faro, colores, spinners y preguntas
 ## Limitaciones conocidas
 
 - **Workspaces Maven**: solo soporta workspaces Gradle.
-- **Servers arrancados fuera de lray** (desde el IDE, por ejemplo): `lray list` los muestra como apagados, porque se basa en el PID que guarda lray. `logs` sí funciona con ellos.
+- **Servers arrancados fuera de lray** (desde el IDE, por ejemplo): `lray server list` los muestra como apagados, porque se basa en el PID que guarda lray. `logs` sí funciona con ellos.
 - **Windows**: Tomcat se lanza con `catalina.bat run` en segundo plano y la salida se redirige a `catalina.out`. Está menos probado que en Linux y macOS.

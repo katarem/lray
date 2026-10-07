@@ -26,8 +26,8 @@ func newList() *cobra.Command {
 			}
 			if len(reg.Servers) == 0 {
 				ui.Say(ui.Sleepy, "Todavía no tienes servers",
-					"Añade uno que ya exista:  "+ui.Code("lray add <nombre> <ruta>"),
-					"o crea uno nuevo:         "+ui.Code("lray init <nombre>"))
+					"Añade uno que ya exista:  "+ui.Code("lray server add <nombre> <ruta>"),
+					"o crea uno nuevo:         "+ui.Code("lray server init <nombre>"))
 				return nil
 			}
 
