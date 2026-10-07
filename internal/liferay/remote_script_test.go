@@ -366,3 +366,73 @@ func hostIP(t *testing.T) string {
 	t.Skip("el nombre de la máquina no resuelve a una IP que no sea de loopback")
 	return ""
 }
+
+// Como en producción: Liferay en un sitio, JBoss en otro, más procesos java
+// en la máquina (Elasticsearch...). lray debe encontrar el JBoss por su
+// proceso, leer su configuración real y la versión del log del día en que
+// arrancó, sin mirar logs viejos (que pueden pesar gigas).
+func TestInspectScriptJBossOutsideHome(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("hace falta bash para disfrazar procesos de java")
+	}
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("hace falta curl")
+	}
+	home := t.TempDir() // /opt/liferay
+	jboss := t.TempDir() // /opt/jboss-eap-7.4
+	mk := func(p, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(filepath.Join(home, "osgi", "modules", ".keep"), "")
+	mk(filepath.Join(jboss, "bin", "standalone.sh"), "#!/bin/sh\n")
+	mk(filepath.Join(jboss, "standalone", "configuration", "standalone.xml"), `<server>
+<socket-binding-group name="s" port-offset="${jboss.socket.binding.port-offset:0}">
+<socket-binding name="http" port="${jboss.http.port:8080}"/></socket-binding-group></server>`)
+	// Logs viejos (con otra versión) y el de hoy, escrito tras arrancar.
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	for i := 1; i <= 5; i++ {
+		f := filepath.Join(home, "logs", fmt.Sprintf("liferay.2026-09-0%d.log", i))
+		mk(f, "2026-09 INFO  [main][StartupHelperUtil:72] Starting Liferay Digital Experience Platform 7.4.13 Update 50 (Cavanaugh / Build 7413 / 2023)\n")
+		_ = os.Chtimes(f, old, old)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	start := func(args string) {
+		t.Helper()
+		p := exec.Command(bash, "-c", `exec -a /usr/lib/jvm/bin/java sh -c 'sleep 30; :' `+args)
+		if err := p.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Process.Kill(); _ = p.Wait() })
+	}
+	start(`-Des.path.home=/usr/share/elasticsearch org.elasticsearch.launcher.CliToolLauncher`)
+	start(fmt.Sprintf(`-D[Standalone] -Djboss.http.port=%d -jar %s/jboss-modules.jar -mp %s/modules org.jboss.as.standalone -Djboss.home.dir=%s -c standalone.xml`, port, jboss, jboss, jboss))
+	time.Sleep(300 * time.Millisecond)
+	mk(filepath.Join(home, "logs", "liferay.2026-10-06.log"),
+		"2026-10-06 14:16:00.000 INFO  [main][StartupHelperUtil:72] Starting Liferay Digital Experience Platform 7.4.13 Update 99 (Cavanaugh / Build 7413 / 2026)\n")
+
+	r := &Remote{Exec: localExec{}, Path: home, Port: 8080, Status: "true"}
+	info, err := r.Inspect(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Home != home || info.AppServer != "jboss" || info.AppDir != jboss || info.PID == 0 {
+		t.Errorf("dónde = home %q, %q %q, PID %d", info.Home, info.AppServer, info.AppDir, info.PID)
+	}
+	if info.Port != port || info.State != Running || info.AnsweredPort() != port {
+		t.Errorf("puerto %d (want %d), estado %v, sonda %s → %d", info.Port, port, info.State, info.URL, info.HTTP)
+	}
+	if info.Version != "DXP 7.4.13 Update 99" {
+		t.Errorf("Version = %q, want la del arranque actual", info.Version)
+	}
+}

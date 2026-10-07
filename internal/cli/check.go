@@ -133,6 +133,7 @@ func checkRemote(ctx context.Context, reg *config.Registry, s *config.Server) er
 		ui.MutedText("Máquina    ") + s.Host,
 		ui.MutedText("Home       ") + info.Home,
 		ui.MutedText("Servidor   ") + appServerLabel(info),
+		ui.MutedText("Proceso    ") + processLabel(info),
 		ui.MutedText("Config     ") + orDash(info.Config),
 		ui.MutedText("Versión    ") + orDash(s.Version),
 		port,
@@ -216,4 +217,11 @@ func newDisconnect() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func processLabel(info *liferay.RemoteInfo) string {
+	if info.PID == 0 {
+		return ui.MutedText("— (no encuentro su proceso java)")
+	}
+	return fmt.Sprintf("java PID %d", info.PID)
 }

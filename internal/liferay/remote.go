@@ -49,6 +49,7 @@ type RemoteInfo struct {
 	Config    string // fichero de configuración leído (server.xml, standalone*.xml)
 	Port      int    // puerto HTTP según su configuración y la línea de comandos (0 si no se sabe)
 	Bind      string // IP de escucha si no es todas (-b / jboss.bind.address)
+	PID       int    // proceso java del servidor (0 si no se ha encontrado)
 	LogFile   string // log más reciente que encaja con el patrón
 	Version   string
 	Active    string // "1", "0" o "" si no se ha podido saber
@@ -158,6 +159,8 @@ func parseInspect(out []byte) (*RemoteInfo, error) {
 			info.Config = v
 		case "jvm":
 			jvm = v
+		case "pid":
+			info.PID, _ = strconv.Atoi(v)
 		case "log":
 			info.LogFile = v
 		case "starting":
@@ -363,6 +366,11 @@ func FindServices(ctx context.Context, e Exec) []string {
 // comando "desde", $5 "1" para buscar la versión en los logs. Sale siempre
 // con 0 y cuenta los problemas con error=..., así no se confunden con fallos
 // de ssh.
+//
+// El servidor de aplicaciones se busca primero dentro del liferay home y, si
+// no está ahí (JBoss en /opt/jboss-eap-7.4 y Liferay en /opt/liferay, por
+// ejemplo), por su proceso java: el de JBoss o Tomcat que mencione el home o,
+// si solo hay uno, ese. De su línea de comandos salen sus carpetas reales.
 const inspectScript = `
 p=$1; log=$2; status=$3; since=$4; want=$5
 case "$p" in "~") p=$HOME ;; "~/"*) p="$HOME/${p#"~/"}" ;; esac
@@ -386,20 +394,43 @@ else
 		if [ -n "$kind" ]; then app=$d; break; fi
 	done
 fi
+real=
+[ -n "$app" ] && real=$(cd "$app" && pwd -P)
+found=$({ ps -e -ww -o pid=,args= 2>/dev/null || ps -eo pid=,args= 2>/dev/null; } |
+	awk -v a="$app" -v b="$real" -v h="$home" '
+	{ pid = $1; line = $0; sub(/^[ \t]*[0-9]+[ \t]+/, "", line); split(line, w, /[ \t]+/) }
+	w[1] !~ /java$/ { next }
+	a != "" { if (index(line, a) || index(line, b)) { print pid " " line; done = 1; exit } next }
+	line ~ /jboss-modules\.jar|org\.jboss\.as\.standalone|org\.apache\.catalina\.startup\.Bootstrap/ {
+		n++; any = pid " " line
+		if (index(line, h)) mention = pid " " line
+	}
+	END { if (done || a != "") exit; if (mention != "") print mention; else if (n == 1) print any }')
+jpid=; jvm=
+if [ -n "$found" ]; then jpid=${found%% *}; jvm=${found#* }; fi
+prop() { printf '%s\n' "$jvm" | sed -n "s/.*-D$1=\([^ ]*\).*/\1/p" | head -n 1; }
+if [ -z "$app" ] && [ -n "$jvm" ]; then
+	d=$(prop 'jboss\.home\.dir')
+	if [ -n "$d" ]; then
+		app=$d; kind=jboss
+	else
+		d=$(prop 'catalina\.base'); [ -n "$d" ] || d=$(prop 'catalina\.home')
+		if [ -n "$d" ]; then app=$d; kind=tomcat; fi
+	fi
+fi
 [ -n "$app" ] || [ -d "$home/osgi" ] || { echo error=notliferay; exit 0; }
 echo "home=$home"
 echo "kind=$kind"
 echo "app=$app"
-jvm=
-if [ -n "$app" ]; then
-	real=$(cd "$app" && pwd -P)
-	jvm=$({ ps -e -ww -o args= 2>/dev/null || ps -eo args= 2>/dev/null; } |
-		awk -v a="$app" -v b="$real" '$1 ~ /java$/ && (index($0, a) || index($0, b)) { print; exit }')
-	echo "jvm=$jvm"
-fi
+[ -n "$jvm" ] && { echo "pid=$jpid"; echo "jvm=$jvm"; }
+jlog=; jpat=
 case "$kind" in
-	tomcat) conf="$app/conf/server.xml" ;;
+	tomcat) conf="$app/conf/server.xml"; jlog="$app/logs"; jpat='catalina.out*' ;;
 	jboss)
+		base=$(prop 'jboss\.server\.base\.dir'); [ -n "$base" ] || base="$app/standalone"
+		cdir=$(prop 'jboss\.server\.config\.dir'); [ -n "$cdir" ] || cdir="$base/configuration"
+		jlog=$(prop 'jboss\.server\.log\.dir'); [ -n "$jlog" ] || jlog="$base/log"
+		jpat='server.log*'
 		cfg=standalone.xml
 		case "$jvm" in
 			*--server-config=*) cfg=${jvm##*--server-config=} ;;
@@ -407,7 +438,7 @@ case "$kind" in
 			*" -c "*) cfg=${jvm##*" -c "} ;;
 		esac
 		cfg=${cfg%% *}
-		case "$cfg" in /*) conf=$cfg ;; *) conf="$app/standalone/configuration/$cfg" ;; esac
+		case "$cfg" in /*) conf=$cfg ;; *) conf="$cdir/$cfg" ;; esac
 		;;
 	*) conf= ;;
 esac
@@ -418,19 +449,39 @@ ldir=$(dirname "$log"); lglob=$(basename "$log")
 latest=$(cd "$ldir" 2>/dev/null && ls -t -- $lglob 2>/dev/null | head -n 1)
 [ -n "$latest" ] && echo "log=$ldir/$latest"
 if [ "$want" = 1 ]; then
-	# El arranque puede ser de hace semanas: se buscan los logs del más nuevo al
-	# más viejo (también los de JBoss) y se para en el primero que lo tenga.
+	# La línea "Starting Liferay" está en el log del día en que arrancó, que
+	# puede ser de hace semanas y los logs pesan mucho. Si se sabe cuándo
+	# arrancó el proceso, se mira solo lo escrito desde entonces, del más viejo
+	# al más nuevo, y grep para en la primera coincidencia. Si no, del más
+	# nuevo al más viejo (máximo 60). Cada grep tiene un límite de tiempo.
+	tm=; command -v timeout >/dev/null 2>&1 && tm="timeout 10"
+	ref=
+	if [ -n "$jpid" ]; then
+		et=$(ps -o etimes= -p "$jpid" 2>/dev/null | tr -d ' ')
+		case "$et" in
+			'' | *[!0-9]*) ;;
+			*) ref=$(mktemp 2>/dev/null) && touch -d "@$(($(date +%s) - et - 120))" "$ref" 2>/dev/null || { rm -f "$ref"; ref=; } ;;
+		esac
+	fi
+	lst() {
+		if [ -n "$ref" ]; then
+			(cd "$1" 2>/dev/null && ls -tr -- $2 2>/dev/null) | while IFS= read -r f; do
+				[ "$1/$f" -nt "$ref" ] && echo "$1/$f"
+			done
+		else
+			(cd "$1" 2>/dev/null && ls -t -- $2 2>/dev/null | head -n 60) | while IFS= read -r f; do echo "$1/$f"; done
+		fi
+	}
 	v=
-	for f in $(cd "$ldir" 2>/dev/null && ls -t -- $lglob 2>/dev/null | head -n 60); do
-		v=$(grep -h "Starting Liferay" "$ldir/$f" 2>/dev/null | tail -n 1)
+	for f in $(lst "$ldir" "$lglob"; [ -n "$jlog" ] && lst "$jlog" "$jpat"); do
+		if [ -n "$ref" ]; then
+			v=$($tm grep -h -m 1 "Starting Liferay" "$f" 2>/dev/null)
+		else
+			v=$($tm grep -h "Starting Liferay" "$f" 2>/dev/null | tail -n 1)
+		fi
 		[ -n "$v" ] && break
 	done
-	if [ -z "$v" ] && [ -d "$app/standalone/log" ]; then
-		for f in $(ls -t "$app/standalone/log" 2>/dev/null | head -n 60); do
-			v=$(grep -h "Starting Liferay" "$app/standalone/log/$f" 2>/dev/null | tail -n 1)
-			[ -n "$v" ] && break
-		done
-	fi
+	[ -n "$ref" ] && rm -f "$ref"
 	echo "starting=$v"
 fi
 if [ -n "$status" ]; then
