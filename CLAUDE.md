@@ -4,7 +4,7 @@ Guidance for Claude Code (and humans) working in this repository.
 
 ## What this is
 
-`lray` is a Go CLI that manages local Liferay environments without blade: it scaffolds Gradle workspaces and modules, registers existing workspaces/bundles, starts and stops Tomcat, tails logs with colors, deploys modules and updates itself. The UI is led by **Faro**, a small lighthouse mascot ("Liferay" → "life ray").
+`lray` is a Go CLI that manages Liferay environments without blade, local or on other machines over SSH: it scaffolds Gradle workspaces and modules, registers existing workspaces/bundles, starts and stops Tomcat, tails logs with colors, deploys modules and updates itself. The UI is led by **Faro**, a small lighthouse mascot ("Liferay" → "life ray").
 
 - Repo: https://github.com/katarem/lray
 - Go 1.23+, pure Go, `CGO_ENABLED=0`
@@ -22,7 +22,7 @@ make cross           # binaries for all platforms in dist/, no GoReleaser
 make snapshot        # full local release in dist/ (needs goreleaser)
 ```
 
-Tests live next to the code (`internal/scaffold/module_test.go`, `internal/update/update_test.go`, `internal/logs/render_test.go`, `internal/logview/logview_test.go`). If you add more, follow `~/.claude/skills/go-testing/SKILL.md` when available (teatest for Bubbletea models).
+Tests live next to the code (`internal/scaffold/module_test.go`, `internal/update/update_test.go`, `internal/logs/render_test.go`, `internal/logview/logview_test.go`, `internal/liferay/remote_test.go`, `internal/ssh/ssh_test.go`...). `internal/liferay/remote_script_test.go` runs the remote shell scripts for real with the local `sh` against a fake JBoss home (Unix only; the rotation test takes ~6 s and is skipped with `-short`). If you add more, follow `~/.claude/skills/go-testing/SKILL.md` when available (teatest for Bubbletea models).
 
 The version is injected at build time with `-ldflags "-X main.version=..."`; `go run`/`go install` builds report `dev`.
 
@@ -31,10 +31,11 @@ The version is injected at build time with `-ldflags "-X main.version=..."`; `go
 ```
 main.go                     entry point; holds `version`
 internal/cli/               one file per command (cobra); root.go has Execute, help template and shared helpers; server.go groups `lray server ...`, workspace.go `lray workspace ...` (+ shared workspace creation), module.go `lray module ...`, update.go `lray update` + the background check
-internal/config/            server registry (servers.json), atomic save
+internal/config/            server registry (servers.json), atomic save; last known state of remotes (state.json)
 internal/liferay/           workspace/bundle detection (Layout), state, start/stop, Gradle runner
 internal/logs/              efficient tail -f, grouping lines into entries, per-level highlighting, JSON formatting, level filter
 internal/logview/           full-screen log viewer (bubbletea) with collapsible entries (default view of `lray server logs`)
+internal/ssh/                transport over the system ssh client: shared connection (ControlMaster), Run/Stream/Interactive
 internal/scaffold/          workspace + module generation, Liferay releases.json catalog
 internal/scaffold/templates/ module templates (blade's project templates as text/template), embedded (go:embed all:templates)
 internal/scaffold/wrapper/  official Gradle wrapper, embedded in the binary (go:embed all:wrapper)
@@ -42,7 +43,7 @@ internal/ui/                Faro, palette, spinners (RunTask), prompts
 internal/update/            latest-release lookup, version compare, self-update (download + checksum + replace)
 ```
 
-Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `logview`. `liferay` → `logs`. `logview` → `logs`, `ui`. `cli` → `update`. `ui`, `config`, `logs`, `scaffold` and `update` do not import other internal packages. Keep it that way: domain packages never print or prompt; that belongs to `cli` + `ui`.
+Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `logview`. `liferay` → `logs`. `logview` → `logs`, `ui`. `cli` → `update`, `ssh`. `ui`, `config`, `logs`, `scaffold`, `ssh` and `update` do not import other internal packages (`liferay.Remote` talks to the machine through the `liferay.Exec` interface, which `ssh.Conn` satisfies; `cli` wires them in `remoteOf`). Keep it that way: domain packages never print or prompt; that belongs to `cli` + `ui`.
 
 ## How it works
 
@@ -54,6 +55,12 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `
 - **Stop**: SIGTERM (Unix) / `catalina.bat stop` (Windows), then SIGKILL / `taskkill` after the timeout.
 - **Deploy**: runs the workspace `gradlew deploy` from the **current directory** (Gradle builds the project of that folder, like `blade deploy`) and adds `-Pliferay.workspace.home.dir=<server home>` so JARs land in the chosen server.
 - **Logs** (`followLogs` in `cli/logs.go`, shared by `server logs` and `server dev`): `logs.Follow` feeds a `logs.Grouper`, which turns lines into `logs.Entry` (head line + continuation lines). A continuation is an indented line, `Caused by:`/`Suppressed:`/`... `, an exception class line or a JSON bracket line; anything else (e.g. `System.out`) is its own entry inheriting the previous level. Entries close on the next head line or on `Flush` (end of each read burst). `logs.Renderer` turns an entry into a `Block` (`Head`, collapsible `Body`, one-line `Summary`): JSON at the end of the message or spanning the continuation lines is re-indented and colored (`--json pretty`, default), compacted (`compact`) or left alone (`raw`); single-key objects with a scalar value stay inline. `logs.Filter` = `--level` (minimum) or `--only` (exact list, wins). By default (TTY and no `--plain`/`--collapse`) `logview.Run` opens the viewer: alt screen, entries collapsed by default, cursor/scroll anchored by (top entry, skipped rows), follows the end until the user scrolls up (reaching the bottom resumes), max 20 000 entries. Mouse is on (`tea.WithMouseCellMotion`): click toggles the entry under the pointer (`entryAt`), wheel scrolls; native selection then needs Shift. `y` copies the selected entry rendered without color via `atotto/clipboard` plus OSC 52 (`go-osc52`, wrapped for tmux/screen) written to stderr. `--plain` (or no TTY) streams head + body to stdout instead, or head + summary with `--collapse` (which implies `--plain`).
+- **Remote servers** (`config.Server.Host` set = remote; `Path` is then the remote liferay home, `Location()` = `host:path`). `lray server add <nombre> usuario@máquina:/ruta` (or `ssh://usuario@máquina:puerto/ruta`, `parseRemoteSpec`; one letter before `:` is a Windows drive) connects, inspects and asks how it is started/stopped (`config.Control`: `systemd` / `service` / `custom` commands / none, plus `Sudo`) unless `--systemd`, `--service` or `--start-cmd/--stop-cmd/--status-cmd` are given.
+  - **Transport** (`internal/ssh`): the system `ssh` binary, so `~/.ssh/config`, agent, keys and `known_hosts` just work. `Connect` opens a background master (`-f -N`, `ControlMaster=yes`, `ControlPersist=$LRAY_SSH_PERSIST` default `4h`, `ControlPath=<user cache>/lray/ssh/%C`): first in `BatchMode` (keys), then, with a TTY, letting ssh ask the password on `/dev/tty` (lray never sees it). The master's stderr goes to a temp *file*, never a pipe (the backgrounded ssh would keep it open forever). `Run`/`Stream` use `ControlMaster=no` + `BatchMode`; commands are sent as `sh -c '<script>' lray '<arg>'...` (`ssh.Remote`, everything single-quoted). `Interactive` uses `ssh -t` so `sudo` asks the user directly; without a TTY, `sudo -n`. Windows OpenSSH has no ControlMaster: there each command authenticates on its own (keys needed). Exit 255 + stderr is classified into `ErrUnreachable` (no VPN), `ErrAuth`; `cli.remoteErr` turns them into Faro-friendly errors.
+  - **Inspect** (`liferay.Remote.Inspect`, one round trip, POSIX sh in `inspectScript`): accepts the liferay home or the app server folder; detects Tomcat (`bin/catalina.sh`) or JBoss/WildFly (`bin/standalone.sh`); returns home, app dir, the config file (`server.xml` / `standalone.xml`, port = `socket-binding name="http"` + `port-offset`, `${prop:default}` → default), newest log matching the pattern (default `logs/liferay.*.log`), optionally the version (`Starting Liferay` in the 3 newest logs), active = status command exit code (or a `java` process mentioning the app dir), `systemctl show -p ActiveEnterTimestamp`, and `curl -I` on 127.0.0.1/hostname. State: inactive → stopped; 2xx/3xx/401/403 → running (JBoss answers 404 before Liferay is deployed); active without probe → running; else starting. The script always exits 0 and reports problems as `error=...` so they are not mistaken for ssh failures.
+  - **Logs**: `followScript` tails the newest matching file and switches when a newer one appears (daily rotation); a watcher on stdin notices when lray closes the stream and stops `tail` on the remote side. Fed through `logs.FollowReader` into the same viewer (`logs.Source`; `logview.Run` quits and returns the source error, e.g. connection lost).
+  - **Last known state**: remotes are never contacted by plain `lray server list` (works offline); it shows `config.States` (`state.json` next to `servers.json`) with its age. `--sync` connects in parallel in batch mode, then asks passwords one by one, then inspects in parallel. `config.RecordState` is called by every remote command; a failed check keeps the last good state and marks `FailedAt`. `--local` / `--remote` filter. `lray server check <nombre>` checks one server live (local or remote) and shows everything known about it.
+  - `start`/`stop`/`dev` ask for confirmation on remotes (`-y` skips; stop defaults to "no"), run the control command, then poll `Inspect` (start also streams the log for progress). `connect` / `disconnect` open/close the shared session. `deploy` and `module --server` go through `loadServer`, which refuses remotes for now; `findServer` returns the registry entry without resolving it locally.
 - **Per-server Java**: `config.Server.JavaHome` is exported as `JAVA_HOME` (and `JRE_HOME` for Tomcat) on start, stop, deploy and `initBundle`.
 - **Init**: writes `settings.gradle`, `gradle.properties`, config folders and the embedded wrapper; workspace plugin version is `scaffold.DefaultPluginVersion`, overridable with `--plugin-version` / `LRAY_WORKSPACE_PLUGIN_VERSION`. Releases come from Liferay's `releases.json` (CDN, then fallback mirrors) cached 24 h in the user cache dir; a stale cache beats no data.
 
@@ -68,7 +75,7 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `
 - **Talking to the user**: use `ui.Say(mood, title, lines...)` for outcomes, `ui.RunTask(title, doneTitle, fn)` for anything long (spinner, Ctrl+C cancels `ctx`, plain output when not a TTY), `ui.Confirm` / `ui.Input` for questions. Use `ui.Code`, `ui.MutedText`, `ui.ShortPath` for formatting. Never use raw `fmt.Println` styling outside `ui`, except the log hot path.
 - **Non-interactive safety**: check `ui.IsTTY()`; `Confirm` returns `ui.ErrNeedsTTY` without a terminal. Destructive or replacing commands offer `--yes/-y`.
 - **Command tree**: the root only holds command groups (areas) plus `completion`; everything about Liferay servers lives under `lray server <cmd>`. New areas get their own group command registered in `newRoot()`.
-- **New commands**: add `newX()` in its own file under `internal/cli/`, register it in its group (`newServer()` for server commands), use `cobra.ExactArgs`, set `ValidArgsFunction: completeServers` when the first arg is a server name, and `loadServer(name)` to get registry + server + layout.
+- **New commands**: add `newX()` in its own file under `internal/cli/`, register it in its group (`newServer()` for server commands), use `cobra.ExactArgs`, set `ValidArgsFunction: completeServers` when the first arg is a server name, and `loadServer(name)` to get registry + server + layout (local only). Commands that also support remotes call `findServer(name)` first and branch on `s.IsRemote()`; anything that walks `reg.Servers` and resolves paths locally must skip remotes.
 - **Server names** must match `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` (`config.ValidName`).
 - **OS-specific code** goes in `process_unix.go` (`//go:build !windows`) / `process_windows.go` with the same function set (`processAlive`, `terminate`, `kill`, `startTomcat`, `MakeExecutable`).
 - **Log hot path** (`internal/logs`): hand-written ANSI codes, reused `strings.Builder`, buffered writer flushed per burst. Do not swap in lipgloss there. Respect `NO_COLOR`.
@@ -83,6 +90,7 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `
 | `NO_COLOR` | Disables colors in `logs` |
 | `LRAY_LOGS_LEVEL`, `LRAY_LOGS_JSON` | Defaults for `--level` and `--json` in `server logs` / `server dev` |
 | `LRAY_NO_UPDATE_CHECK` | Disables the daily new-version notice |
+| `LRAY_SSH_PERSIST` | How long the shared SSH session to remotes stays open while idle (ssh format, default `4h`) |
 | `LRAY_REPO` | Repo for releases: `install.sh` and `lray update` |
 | `LRAY_VERSION`, `LRAY_BIN_DIR` | `install.sh` only |
 
@@ -98,3 +106,5 @@ Push a `v*` tag → `.github/workflows/release.yml` runs GoReleaser: builds linu
 - Install methods only work once a `v*` release exists; Homebrew also needs the `katarem/homebrew-tap` repo and the `HOMEBREW_TAP_TOKEN` secret.
 - Only Gradle workspaces are supported (no Maven).
 - Windows support is less tested than Linux/macOS.
+- Remote servers need `sh`, `ls`, `tail -F`, `awk` and `ps` on the machine (any Linux has them); `curl` is optional (without it, "service active" counts as running). The status command runs without sudo, so it must not need it (`systemctl is-active` doesn't).
+- The SSH transport (master, password prompt, `ssh -t` + sudo) is not covered by automated tests: they need a real sshd. The remote scripts are (`remote_script_test.go`).

@@ -293,6 +293,9 @@ func moduleWorkspace(server string, interactive bool) (string, string, error) {
 	type wsServer struct{ name, ws string }
 	var known []wsServer
 	for _, s := range reg.Servers {
+		if s.IsRemote() {
+			continue
+		}
 		if l, err := liferay.Resolve(s.Path); err == nil && l.Workspace != "" {
 			known = append(known, wsServer{s.Name, l.Workspace})
 		}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,12 +17,22 @@ func newAdd() *cobra.Command {
 	var javaHome, version string
 	var port int
 	var yes bool
+	var rf remoteFlags
 	cmd := &cobra.Command{
 		Use:   "add <nombre> <ruta>",
-		Short: "Añade a la lista un workspace o bundle que ya tienes",
+		Short: "Añade a la lista un workspace o bundle que ya tienes, en tu máquina o en otra por SSH",
+		Long: `Añade a la lista un workspace o bundle que ya tienes.
+
+La ruta puede estar en otra máquina: usuario@máquina:/ruta o
+ssh://usuario@máquina:puerto/ruta (vale cualquier alias de ~/.ssh/config).
+lray usa tu cliente ssh: si la máquina pide contraseña, te la pide una vez y
+reutiliza la conexión durante un rato (LRAY_SSH_PERSIST, por defecto 4h).
+Sin --systemd, --service ni --*-cmd te pregunta cómo se arranca y se para.`,
 		Example: `  lray server add tienda ~/proyectos/tienda-workspace
   lray server add antiguo /opt/liferay-7.2 --java /usr/lib/jvm/java-11
-  lray server add otro ~/proyectos/otro-workspace --port 9080`,
+  lray server add otro ~/proyectos/otro-workspace --port 9080
+  lray server add pre usuario@pre-liferay:/opt/liferay --systemd jboss
+  lray server add prod ssh://usuario@prod:2222/opt/liferay --log logs/liferay.*.log`,
 		Args: cobra.ExactArgs(2),
 		ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 1 {
@@ -37,6 +48,27 @@ func newAdd() *cobra.Command {
 			portSet := cmd.Flags().Changed("port")
 			if portSet && (port < 1 || port > 65535) {
 				return fmt.Errorf("puerto no válido: %d", port)
+			}
+			dest, sshPort, rpath, remote, err := parseRemoteSpec(path)
+			if err != nil {
+				return err
+			}
+			if remote {
+				if javaHome != "" {
+					return errors.New("--java solo vale para servers locales; en el remoto se usa el Java con el que arranque su servicio")
+				}
+				if sshPort != 0 && !cmd.Flags().Changed("ssh-port") {
+					rf.sshPort = sshPort
+				}
+				return addRemote(cmd, remoteAdd{
+					name: name, dest: dest, path: rpath, version: version,
+					port: port, portSet: portSet, yes: yes, flags: &rf,
+				})
+			}
+			for _, f := range []string{"ssh-port", "log", "systemd", "service", "start-cmd", "stop-cmd", "status-cmd", "sudo"} {
+				if cmd.Flags().Changed(f) {
+					return fmt.Errorf("--%s solo vale para servers remotos (usuario@máquina:/ruta)", f)
+				}
 			}
 			l, err := liferay.Resolve(path)
 			if err != nil {
@@ -136,6 +168,7 @@ func newAdd() *cobra.Command {
 	cmd.Flags().StringVar(&version, "version", "", "Versión a mostrar si no se detecta sola")
 	cmd.Flags().IntVar(&port, "port", 0, "Puerto HTTP; si no lo indicas, uso el del bundle o el siguiente libre")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "No preguntar nada")
+	rf.register(cmd)
 	return cmd
 }
 
@@ -144,7 +177,7 @@ func newAdd() *cobra.Command {
 func takenPorts(reg *config.Registry, except, root string) map[int]string {
 	taken := map[int]string{}
 	for _, s := range reg.Servers {
-		if s.Name == except || s.Path == root {
+		if s.Name == except || s.Path == root || s.IsRemote() {
 			continue
 		}
 		l, err := liferay.Resolve(s.Path)

@@ -32,13 +32,16 @@ type Config struct {
 	Render logs.Options
 }
 
-// Run abre el visor y sigue path desde offset hasta que el usuario salga.
-func Run(parent context.Context, cfg Config, path string, offset int64) error {
+// Run abre el visor y sigue src hasta que el usuario salga. Si src falla
+// (por ejemplo, se corta la conexión con un server remoto), el visor se
+// cierra y Run devuelve ese error.
+func Run(parent context.Context, cfg Config, src logs.Source) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	p := tea.NewProgram(newModel(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	done := make(chan struct{})
+	var srcErr error
 	go func() {
 		defer close(done)
 		g := logs.NewGrouper()
@@ -48,17 +51,24 @@ func Run(parent context.Context, cfg Config, path string, offset int64) error {
 				batch = append(batch, e)
 			}
 		}
-		_ = logs.Follow(ctx, path, offset, func(line string) { add(g.Add(line)) }, func() {
+		err := src(ctx, func(line string) { add(g.Add(line)) }, func() {
 			add(g.Flush())
 			if len(batch) > 0 {
 				p.Send(entriesMsg(batch))
 				batch = nil
 			}
 		})
+		if err != nil && ctx.Err() == nil {
+			srcErr = err
+			p.Quit()
+		}
 	}()
 	_, err := p.Run()
 	cancel()
 	<-done
+	if srcErr != nil {
+		return srcErr
+	}
 	if errors.Is(err, tea.ErrProgramKilled) && parent.Err() != nil {
 		return nil // Ctrl+C fuera del visor (señal): salir sin más
 	}

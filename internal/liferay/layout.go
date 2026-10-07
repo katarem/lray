@@ -107,6 +107,14 @@ func (l *Layout) Port() int {
 	if err != nil {
 		return l.port
 	}
+	if p := tomcatPort(data); p > 0 {
+		l.port = p
+	}
+	return l.port
+}
+
+// tomcatPort lee el primer conector HTTP (ni AJP ni SSL) de un server.xml.
+func tomcatPort(data []byte) int {
 	var srv struct {
 		Services []struct {
 			Connectors []struct {
@@ -117,7 +125,7 @@ func (l *Layout) Port() int {
 		} `xml:"Service"`
 	}
 	if xml.Unmarshal(data, &srv) != nil {
-		return l.port
+		return 0
 	}
 	for _, s := range srv.Services {
 		for _, c := range s.Connectors {
@@ -125,12 +133,11 @@ func (l *Layout) Port() int {
 				continue
 			}
 			if p, err := strconv.Atoi(c.Port); err == nil && p > 0 {
-				l.port = p
 				return p
 			}
 		}
 	}
-	return l.port
+	return 0
 }
 
 // IsWorkspace comprueba si dir es la raíz de un Liferay Workspace (Gradle).
