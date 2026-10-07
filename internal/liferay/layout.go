@@ -208,7 +208,7 @@ func liferayLogs(home string) []string {
 
 // ---------------------------------------------------------------- versión
 
-var startingRe = regexp.MustCompile(`Starting (Liferay [^(\r\n]+?)\s*\(`)
+var startingRe = regexp.MustCompile(`(?m)Starting (Liferay [^(\r\n]+?)\s*(?:\(|\r?$)`)
 
 // DetectVersion intenta averiguar la versión: primero por el gradle.properties
 // del workspace y, si no, buscando el "Starting Liferay ..." de los logs.

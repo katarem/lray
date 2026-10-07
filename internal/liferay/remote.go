@@ -453,7 +453,9 @@ if [ "$want" = 1 ]; then
 	# puede ser de hace semanas y los logs pesan mucho. Si se sabe cuándo
 	# arrancó el proceso, se mira solo lo escrito desde entonces, del más viejo
 	# al más nuevo, y grep para en la primera coincidencia. Si no, del más
-	# nuevo al más viejo (máximo 60). Cada grep tiene un límite de tiempo.
+	# nuevo al más viejo (máximo 60). grep va con LC_ALL=C y texto literal
+	# (-F), lo más barato también con un grep antiguo. Cada grep tiene un
+	# límite de tiempo.
 	tm=; command -v timeout >/dev/null 2>&1 && tm="timeout 10"
 	ref=
 	if [ -n "$jpid" ]; then
@@ -463,6 +465,7 @@ if [ "$want" = 1 ]; then
 			*) ref=$(mktemp 2>/dev/null) && touch -d "@$(($(date +%s) - et - 120))" "$ref" 2>/dev/null || { rm -f "$ref"; ref=; } ;;
 		esac
 	fi
+	[ -n "$ref" ] && [ -n "$tm" ] && tm="timeout 40" # pocos ficheros: más margen para cada uno
 	lst() {
 		if [ -n "$ref" ]; then
 			(cd "$1" 2>/dev/null && ls -tr -- $2 2>/dev/null) | while IFS= read -r f; do
@@ -475,9 +478,9 @@ if [ "$want" = 1 ]; then
 	v=
 	for f in $(lst "$ldir" "$lglob"; [ -n "$jlog" ] && lst "$jlog" "$jpat"); do
 		if [ -n "$ref" ]; then
-			v=$($tm grep -h -m 1 "Starting Liferay" "$f" 2>/dev/null)
+			v=$(LC_ALL=C $tm grep -a -F -h -m 1 "Starting Liferay" "$f" 2>/dev/null)
 		else
-			v=$($tm grep -h "Starting Liferay" "$f" 2>/dev/null | tail -n 1)
+			v=$(LC_ALL=C $tm grep -a -F -h "Starting Liferay" "$f" 2>/dev/null | tail -n 1)
 		fi
 		[ -n "$v" ] && break
 	done
