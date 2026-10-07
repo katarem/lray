@@ -50,6 +50,7 @@ type RemoteInfo struct {
 	Port      int    // puerto HTTP según su configuración y la línea de comandos (0 si no se sabe)
 	Bind      string // IP de escucha si no es todas (-b / jboss.bind.address)
 	PID       int    // proceso java del servidor (0 si no se ha encontrado)
+	Kernel    string // portal-kernel.jar del que se ha leído la versión
 	LogFile   string // log más reciente que encaja con el patrón
 	Version   string
 	Active    string // "1", "0" o "" si no se ha podido saber
@@ -75,8 +76,9 @@ func (r *Remote) LogPattern() string {
 // viajes: el primero localiza el servidor, su configuración y su proceso; el
 // segundo sondea HTTP en el puerto que de verdad usa (el de la configuración
 // con lo que cambie su línea de comandos, y el registrado si es otro).
-// withVersion busca además la versión en los logs si el portal no la dice
-// en sus cabeceras (más lento con muchos logs).
+// La versión sale del portal desplegado (portal-kernel.jar) o de su cabecera
+// HTTP; withVersion la busca además en los logs si no hay otra forma (más
+// lento con muchos logs).
 func (r *Remote) Inspect(ctx context.Context, withVersion bool) (*RemoteInfo, error) {
 	want := ""
 	if withVersion {
@@ -117,6 +119,7 @@ func parseInspect(out []byte) (*RemoteInfo, error) {
 	info := &RemoteInfo{HTTP: -1}
 	var conf bytes.Buffer
 	var jvm string
+	var release []string
 	inConf := false
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(make([]byte, 64*1024), 16<<20)
@@ -167,6 +170,10 @@ func parseInspect(out []byte) (*RemoteInfo, error) {
 			if m := startingRe.FindStringSubmatch(v); m != nil {
 				info.Version = prettyVersion(m[1])
 			}
+		case "kernel":
+			info.Kernel = v
+		case "release":
+			release = append(release, v)
 		case "active":
 			info.Active = v
 		case "since":
@@ -179,6 +186,9 @@ func parseInspect(out []byte) (*RemoteInfo, error) {
 	}
 	if info.Home == "" {
 		return nil, errors.New("respuesta inesperada de la máquina remota")
+	}
+	if v := releaseVersion(release); v != "" {
+		info.Version = v // la del portal desplegado manda sobre la de los logs
 	}
 	switch info.AppServer {
 	case "tomcat":
@@ -213,6 +223,41 @@ func parseProbe(out []byte, info *RemoteInfo) {
 			}
 		}
 	}
+}
+
+var (
+	releaseNameRe    = regexp.MustCompile(`Liferay (?:Digital Experience Platform|Community Edition Portal|Portal Community Edition|DXP|Portal)`)
+	releaseDisplayRe = regexp.MustCompile(`\d{4}\.[Qq]\d+(?:\.\d+)?(?: LTS)?|\d+(?:\.\d+){2,3} (?:Update|GA|SP|FP|DE) ?\d+`)
+	releasePlainRe   = regexp.MustCompile(`^\D?(\d+\.\d+\.\d+)$`)
+)
+
+// releaseVersion saca la versión de las cadenas de ReleaseInfo.class
+// ("Liferay Digital Experience Platform", "7.4.13 Update 137", "2025.Q1.5
+// LTS"...). Las cadenas pueden llevar delante un carácter basura: el byte de
+// longitud de la constante, si es imprimible.
+func releaseVersion(lines []string) string {
+	var name, display, plain string
+	for _, l := range lines {
+		if name == "" {
+			name = releaseNameRe.FindString(l)
+		}
+		if display == "" {
+			display = releaseDisplayRe.FindString(l)
+		}
+		if m := releasePlainRe.FindStringSubmatch(l); m != nil && plain == "" {
+			plain = m[1]
+		}
+	}
+	if display == "" {
+		display = plain
+	}
+	switch {
+	case display == "":
+		return ""
+	case name == "":
+		return display
+	}
+	return prettyVersion(name + " " + display)
 }
 
 // portalHeaderRe saca el nombre de la cabecera Liferay-Portal
@@ -373,6 +418,7 @@ func FindServices(ctx context.Context, e Exec) []string {
 // si solo hay uno, ese. De su línea de comandos salen sus carpetas reales.
 const inspectScript = `
 p=$1; log=$2; status=$3; since=$4; want=$5
+base=; rel=
 case "$p" in "~") p=$HOME ;; "~/"*) p="$HOME/${p#"~/"}" ;; esac
 [ -d "$p" ] || { echo error=nodir; exit 0; }
 cd "$p" 2>/dev/null || { echo error=noaccess; exit 0; }
@@ -448,8 +494,36 @@ case "$log" in /*) ;; *) log="$home/$log" ;; esac
 ldir=$(dirname "$log"); lglob=$(basename "$log")
 latest=$(cd "$ldir" 2>/dev/null && ls -t -- $lglob 2>/dev/null | head -n 1)
 [ -n "$latest" ] && echo "log=$ldir/$latest"
-if [ "$want" = 1 ]; then
-	# La línea "Starting Liferay" está en el log del día en que arrancó, que
+v=
+# Lo más fiable es el propio portal desplegado: la clase ReleaseInfo de
+# portal-kernel.jar lleva el nombre y la versión exactos, y no depende del
+# nivel de log (en producción suele estar en WARN y no queda la línea de
+# arranque). Leerla cuesta milisegundos, así que se hace siempre.
+if [ -n "$app" ]; then
+	kjar=
+	for j in "$base"/deployments/*.war/WEB-INF/shielded-container-lib/portal-kernel.jar \
+		"$base"/deployments/*.war/WEB-INF/lib/portal-kernel.jar \
+		"$app"/modules/com/liferay/portal/main/portal-kernel.jar \
+		"$app"/webapps/*/WEB-INF/shielded-container-lib/portal-kernel.jar \
+		"$app"/webapps/*/WEB-INF/lib/portal-kernel.jar \
+		"$app"/lib/ext/portal-kernel.jar; do
+		if [ -r "$j" ]; then kjar=$j; break; fi
+	done
+	if [ -n "$kjar" ]; then
+		echo "kernel=$kjar"
+		cls=com/liferay/portal/kernel/util/ReleaseInfo.class
+		rel=$({
+			if command -v unzip >/dev/null 2>&1; then
+				unzip -p "$kjar" "$cls"
+			elif command -v python3 >/dev/null 2>&1; then
+				python3 -c 'import sys, zipfile; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]))' "$kjar" "$cls"
+			fi
+		} 2>/dev/null | LC_ALL=C tr -c '[:print:]' '\n' | grep -E 'Liferay|[0-9]\.[0-9]' | head -n 40)
+		[ -n "$rel" ] && printf '%s\n' "$rel" | sed 's/^/release=/'
+	fi
+fi
+if [ "$want" = 1 ] && [ -z "$rel" ]; then
+	# Si no, la línea "Starting Liferay" está en el log del día en que arrancó, que
 	# puede ser de hace semanas y los logs pesan mucho. Si se sabe cuándo
 	# arrancó el proceso, se mira solo lo escrito desde entonces, del más viejo
 	# al más nuevo, y grep para en la primera coincidencia. Si no, del más

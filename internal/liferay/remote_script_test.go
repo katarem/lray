@@ -3,6 +3,7 @@
 package liferay
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
 	"io"
@@ -379,7 +380,7 @@ func TestInspectScriptJBossOutsideHome(t *testing.T) {
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Skip("hace falta curl")
 	}
-	home := t.TempDir() // /opt/liferay
+	home := t.TempDir()  // /opt/liferay
 	jboss := t.TempDir() // /opt/jboss-eap-7.4
 	mk := func(p, content string) {
 		t.Helper()
@@ -434,5 +435,41 @@ func TestInspectScriptJBossOutsideHome(t *testing.T) {
 	}
 	if info.Version != "DXP 7.4.13 Update 99" {
 		t.Errorf("Version = %q, want la del arranque actual", info.Version)
+	}
+}
+
+// La versión del portal desplegado (ReleaseInfo de portal-kernel.jar) manda
+// sobre la de los logs, que en producción ni siquiera suele estar.
+func TestInspectScriptVersionFromKernel(t *testing.T) {
+	_, unzipErr := exec.LookPath("unzip")
+	_, pyErr := exec.LookPath("python3")
+	if unzipErr != nil && pyErr != nil {
+		t.Skip("hace falta unzip o python3")
+	}
+	home := fakeJBoss(t) // sus logs dicen Update 92
+	lib := filepath.Join(home, "jboss-eap-7.4", "standalone", "deployments", "ROOT.war", "WEB-INF", "shielded-container-lib")
+	if err := os.MkdirAll(lib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(lib, "portal-kernel.jar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, _ := zw.Create("com/liferay/portal/kernel/util/ReleaseInfo.class")
+	// Un constant pool de mentira: cada cadena va precedida de su longitud.
+	w.Write([]byte("\xca\xfe\xba\xbe\x00\x00\x00\x34\x01\x00\x23Liferay Digital Experience Platform\x01\x00\x0d2025.Q1.5 LTS\x01\x00\x066.2.10\x0c\x00"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	r := &Remote{Exec: localExec{}, Path: home}
+	info, err := r.Inspect(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Version != "DXP 2025.Q1.5 LTS" || !strings.HasSuffix(info.Kernel, "portal-kernel.jar") {
+		t.Errorf("Version = %q (kernel %q), want la del portal desplegado", info.Version, info.Kernel)
 	}
 }

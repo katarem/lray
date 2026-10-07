@@ -218,3 +218,25 @@ func TestRemoteFollowAndInspectArgs(t *testing.T) {
 		t.Errorf("parado: %+v, %v, %d llamadas", info, err, len(f.calls))
 	}
 }
+
+func TestReleaseVersion(t *testing.T) {
+	cases := []struct {
+		lines []string
+		want  string
+	}{
+		// Cadenas reales de ReleaseInfo.class (portal-kernel 166.0.0); "#" y ","
+		// son el byte de longitud de la constante.
+		{[]string{"#Liferay Digital Experience Platform", "7.4.13 Update 137", ",Liferay Digital Experience Platform / 7.4.13", "Liferay, Inc.", "7.4.13"},
+			"DXP 7.4.13 Update 137"},
+		{[]string{"#Liferay Digital Experience Platform", "\x0d2025.Q1.5 LTS"}, "DXP 2025.Q1.5 LTS"},
+		{[]string{" Liferay Community Edition Portal", "7.4.3.132 GA132", "7.4.3"}, "Portal CE 7.4.3.132 GA132"},
+		{[]string{"Liferay Portal", "7.2.1"}, "Portal 7.2.1"},
+		{[]string{"Liferay, Inc."}, ""},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := releaseVersion(c.lines); got != c.want {
+			t.Errorf("releaseVersion(%q) = %q, want %q", c.lines, got, c.want)
+		}
+	}
+}
