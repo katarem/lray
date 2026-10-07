@@ -1,5 +1,7 @@
 # lray
 
+🇪🇸 Español · [🇬🇧 English](README.en.md)
+
 Gestiona tus entornos Liferay desde la terminal, sin blade. Con `lray` puedes crear workspaces, arrancar y parar servers, seguir sus logs con colores y desplegar módulos. Te acompaña Faro, un faro pequeñito que te avisa de cómo va cada cosa.
 
 ```
@@ -16,10 +18,12 @@ lray deploy <nombre>        Compila y despliega (todo o el módulo actual)
 
 ## Instalación
 
+El proyecto vive en **[github.com/katarem/lray](https://github.com/katarem/lray)**. Las releases están en [github.com/katarem/lray/releases](https://github.com/katarem/lray/releases).
+
 ### Con el script (Linux y macOS)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/tu-usuario/lray/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/katarem/lray/main/install.sh | sh
 ```
 
 El script detecta tu sistema y tu arquitectura, descarga la última release, verifica el checksum e instala el binario en `~/.local/bin`. Tiene tres variables opcionales:
@@ -31,27 +35,27 @@ El script detecta tu sistema y tu arquitectura, descarga la última release, ver
 ### Con Homebrew
 
 ```sh
-brew install tu-usuario/tap/lray
+brew install katarem/tap/lray
 ```
 
 ### Con Go
 
 ```sh
-go install github.com/tu-usuario/lray@latest
+go install github.com/katarem/lray@latest
 ```
 
 Instalado así, `lray --version` muestra `dev`, porque la versión solo se inyecta en los builds de release.
 
 ### Windows
 
-Descarga `lray_windows_amd64.zip` de la página de releases. Descomprímelo en una carpeta que esté en tu `PATH`, por ejemplo `%USERPROFILE%\bin`.
+Descarga `lray_windows_amd64.zip` de la [página de releases](https://github.com/katarem/lray/releases). Descomprímelo en una carpeta que esté en tu `PATH`, por ejemplo `%USERPROFILE%\bin`.
 
 ### Desde el código fuente
 
 Necesitas Go 1.23 o superior.
 
 ```sh
-git clone https://github.com/tu-usuario/lray && cd lray
+git clone https://github.com/katarem/lray && cd lray
 go mod tidy          # la primera vez: genera go.sum
 make install         # compila e instala en ~/.local/bin
 ```
@@ -144,21 +148,14 @@ Otras variables de entorno:
 
 ### Preparar el repositorio (una sola vez)
 
-1. Crea el repo `tu-usuario/lray` en GitHub y sustituye `tu-usuario` por tu usuario en todo el proyecto:
-
-   ```sh
-   grep -rl 'tu-usuario' . | xargs sed -i '' 's/tu-usuario/TU_USUARIO/g'   # macOS
-   grep -rl 'tu-usuario' . | xargs sed -i 's/tu-usuario/TU_USUARIO/g'      # Linux
-   ```
-
-2. Genera `go.sum` y súbelo junto al resto:
+1. Genera `go.sum` y súbelo junto al resto:
 
    ```sh
    go mod tidy
-   git add . && git commit -m "Primera versión" && git push
+   git add go.sum && git commit -m "chore: add go.sum" && git push
    ```
 
-3. Si quieres Homebrew, sigue estos pasos. Si no, borra el bloque `brews` de `.goreleaser.yaml`.
+2. Si quieres Homebrew, sigue estos pasos. Si no, borra el bloque `brews` de `.goreleaser.yaml`.
    - Crea un repo público vacío llamado `homebrew-tap`.
    - Crea un *fine-grained token* con permiso *Contents: Read and write* solo sobre ese repo.
    - Guárdalo en el repo de `lray` como secreto `HOMEBREW_TAP_TOKEN` (*Settings → Secrets and variables → Actions*).

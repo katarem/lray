@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu-usuario/lray/internal/liferay"
-	"github.com/tu-usuario/lray/internal/logs"
-	"github.com/tu-usuario/lray/internal/ui"
+	"github.com/katarem/lray/internal/liferay"
+	"github.com/katarem/lray/internal/logs"
+	"github.com/katarem/lray/internal/ui"
 )
 
 func newLogs() *cobra.Command {

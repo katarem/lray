@@ -11,9 +11,9 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/tu-usuario/lray/internal/config"
-	"github.com/tu-usuario/lray/internal/scaffold"
-	"github.com/tu-usuario/lray/internal/ui"
+	"github.com/katarem/lray/internal/config"
+	"github.com/katarem/lray/internal/scaffold"
+	"github.com/katarem/lray/internal/ui"
 )
 
 func newInit() *cobra.Command {

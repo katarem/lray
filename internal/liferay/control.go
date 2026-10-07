@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tu-usuario/lray/internal/logs"
+	"github.com/katarem/lray/internal/logs"
 )
 
 // State es el estado de un server.

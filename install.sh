@@ -1,10 +1,10 @@
 #!/bin/sh
 # Instalador de lray para Linux y macOS.
-#   curl -fsSL https://raw.githubusercontent.com/tu-usuario/lray/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/katarem/lray/main/install.sh | sh
 # Variables opcionales: LRAY_REPO, LRAY_VERSION (p. ej. v0.2.0), LRAY_BIN_DIR
 set -eu
 
-REPO="${LRAY_REPO:-tu-usuario/lray}"
+REPO="${LRAY_REPO:-katarem/lray}"
 VERSION="${LRAY_VERSION:-latest}"
 BIN_DIR="${LRAY_BIN_DIR:-$HOME/.local/bin}"
 

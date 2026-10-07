@@ -1,4 +1,4 @@
-module github.com/tu-usuario/lray
+module github.com/katarem/lray
 
 go 1.23.0
 

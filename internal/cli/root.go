@@ -14,9 +14,9 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/tu-usuario/lray/internal/config"
-	"github.com/tu-usuario/lray/internal/liferay"
-	"github.com/tu-usuario/lray/internal/ui"
+	"github.com/katarem/lray/internal/config"
+	"github.com/katarem/lray/internal/liferay"
+	"github.com/katarem/lray/internal/ui"
 )
 
 // Execute ejecuta lray y devuelve el código de salida.

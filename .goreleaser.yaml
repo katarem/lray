@@ -31,15 +31,15 @@ changelog:
   filters:
     exclude: ["^docs:", "^test:", "^chore:"]
 
-# Fórmula de Homebrew en un repo aparte (tu-usuario/homebrew-tap).
+# Fórmula de Homebrew en un repo aparte (katarem/homebrew-tap).
 # Si no vas a usar Homebrew, borra este bloque entero.
 brews:
   - repository:
-      owner: tu-usuario
+      owner: katarem
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: https://github.com/tu-usuario/lray
+    homepage: https://github.com/katarem/lray
     description: Gestiona entornos Liferay desde la terminal
     install: |
       bin.install "lray"

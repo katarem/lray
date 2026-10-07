@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/tu-usuario/lray/internal/cli"
+	"github.com/katarem/lray/internal/cli"
 )
 
 // version la inyecta el build: -ldflags "-X main.version=v1.2.3"
