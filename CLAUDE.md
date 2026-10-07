@@ -85,7 +85,7 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`. `
 
 ## Release
 
-Push a `v*` tag → `.github/workflows/release.yml` runs GoReleaser: builds linux/darwin/windows × amd64/arm64, uploads archives named `lray_<os>_<arch>` (no version, so `install.sh` can use `releases/latest/download`) plus `checksums.txt`, and updates the Homebrew formula in `<owner>/homebrew-tap` (needs the `HOMEBREW_TAP_TOKEN` secret).
+Push a `v*` tag → `.github/workflows/release.yml` runs GoReleaser: builds linux/darwin/windows × amd64/arm64, uploads archives named `lray_<os>_<arch>` (no version, so `install.sh` can use `releases/latest/download`) plus `checksums.txt`, and updates the Homebrew formula in `<owner>/homebrew-tap` only when the `HOMEBREW_TAP_TOKEN` secret is set (`skip_upload` uses `isEnvSet`; without it the release still succeeds). `brews` is deprecated in GoReleaser v2 but still works.
 
 ## Known gotchas
 

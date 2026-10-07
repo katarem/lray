@@ -210,7 +210,7 @@ Otras variables de entorno:
 
 ### Preparar el repositorio (una sola vez)
 
-Si quieres Homebrew, sigue estos pasos. Si no, borra el bloque `brews` de `.goreleaser.yaml`.
+Solo hace falta si quieres Homebrew. Sin el secreto `HOMEBREW_TAP_TOKEN` la release se publica igual, sin fórmula.
 - Crea un repo público vacío llamado `homebrew-tap`.
 - Crea un *fine-grained token* con permiso *Contents: Read and write* solo sobre ese repo.
 - Guárdalo en el repo de `lray` como secreto `HOMEBREW_TAP_TOKEN` (*Settings → Secrets and variables → Actions*).
@@ -226,7 +226,7 @@ Al subir el tag, el workflow `.github/workflows/release.yml` ejecuta GoReleaser 
 
 - Compila para Linux, macOS y Windows, en amd64 y arm64.
 - Sube los `.tar.gz`, los `.zip` y `checksums.txt` a la release.
-- Actualiza la fórmula de Homebrew.
+- Actualiza la fórmula de Homebrew (si está el secreto).
 
 Desde ese momento ya funcionan el script de instalación, `brew install` y `go install …@latest`.
 

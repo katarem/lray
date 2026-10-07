@@ -32,9 +32,11 @@ changelog:
     exclude: ["^docs:", "^test:", "^chore:"]
 
 # Fórmula de Homebrew en un repo aparte (katarem/homebrew-tap).
-# Si no vas a usar Homebrew, borra este bloque entero.
+# Solo se publica si existe el secreto HOMEBREW_TAP_TOKEN; sin él la release
+# sale igual, sin fórmula.
 brews:
-  - repository:
+  - skip_upload: '{{ if isEnvSet "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    repository:
       owner: katarem
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
