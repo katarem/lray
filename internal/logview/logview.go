@@ -78,8 +78,8 @@ func Run(parent context.Context, cfg Config, src logs.Source) error {
 type (
 	entriesMsg []*logs.Entry
 	copiedMsg  struct {
-		lines int
-		err   error
+		entries, lines int
+		err            error
 	}
 	noticeDoneMsg int
 )
@@ -91,6 +91,10 @@ type item struct {
 	open    bool
 	rowsKey int
 	rows    []string
+	// para buscar: cabecera y cuerpo sin colores en minúsculas
+	text       string
+	headLen    int
+	searchable bool
 }
 
 type model struct {
@@ -100,6 +104,7 @@ type model struct {
 	items   []*item
 	visible []*item
 	cursor  int // índice en visible
+	anchor  int // otro extremo de la selección con Mayús+↑↓ (índice en visible); -1 si no hay
 	top     int // primera entrada pintada (índice en visible)
 	skip    int // filas de visible[top] que quedan por encima de la pantalla
 	follow  bool
@@ -111,6 +116,15 @@ type model struct {
 	copy    func(string) error
 	width   int
 	height  int
+
+	searching bool        // escribiendo en la barra de búsqueda
+	input     []rune      // lo escrito
+	query     string      // búsqueda activa, en minúsculas
+	shown     string      // la misma, tal cual se escribió
+	saved     searchState // para volver atrás con Esc
+	autoOpen  *item       // entrada desplegada por la búsqueda
+	hitItem   *item       // última coincidencia a la que se ha saltado
+	hits, hit int         // coincidencias visibles y posición de hitItem
 }
 
 func newModel(cfg Config) *model {
@@ -121,6 +135,7 @@ func newModel(cfg Config) *model {
 		copy:   copyToClipboard,
 		filter: cfg.Filter,
 		follow: true,
+		anchor: -1,
 	}
 }
 
@@ -139,12 +154,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, m.say("✘ No he podido copiar: " + msg.err.Error())
 		}
+		if msg.entries > 1 {
+			return m, m.say("✔ Copiadas " + strconv.Itoa(msg.entries) + " entradas al portapapeles (" + plural(msg.lines, "línea", "líneas") + ")")
+		}
 		return m, m.say("✔ Copiada al portapapeles (" + plural(msg.lines, "línea", "líneas") + ")")
 	case noticeDoneMsg:
 		if int(msg) == m.noticeN {
 			m.notice = ""
 		}
 	case tea.KeyMsg:
+		if m.searching {
+			return m, m.searchKey(msg)
+		}
 		if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 && !msg.Paste {
 			// Teclas pulsadas muy seguidas llegan juntas: una a una.
 			var cmd tea.Cmd
@@ -155,8 +176,26 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
-		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		k := msg.String()
+		switch k {
+		case "shift+up", "shift+down", "shift+home", "shift+end":
+			m.extend(k)
+			return m, nil
+		case "down", "j", "up", "k", "pgdown", "ctrl+f", "pgup", "ctrl+b", "ctrl+d", "ctrl+u", "home", "g", "end", "h", "G":
+			m.anchor = -1 // moverse sin Mayús deja solo la entrada del cursor
+		}
+		switch k {
+		case "esc":
+			if m.anchor >= 0 {
+				m.anchor = -1
+				return m, nil
+			}
+			if m.query != "" {
+				m.clearSearch()
+				return m, nil
+			}
+			return m, tea.Quit
+		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "down", "j":
 			m.down()
@@ -172,7 +211,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll(-m.viewHeight() / 2)
 		case "home", "g":
 			m.follow, m.cursor, m.top, m.skip = false, 0, 0, 0
-		case "end", "G", "f":
+		case "end", "h", "G":
 			m.follow = true
 			m.settle()
 		case "enter", " ", "tab", "o":
@@ -183,6 +222,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cycleLevel()
 		case "y":
 			return m, m.copySelected()
+		case "f", "/":
+			m.startSearch()
+		case "n":
+			return m, m.next(-1)
+		case "N":
+			return m, m.next(1)
 		}
 	}
 	return m, nil
@@ -198,6 +243,7 @@ func (m *model) mouse(msg tea.MouseMsg) {
 		m.scroll(3)
 	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
 		if i, ok := m.entryAt(msg.Y); ok {
+			m.anchor = -1
 			m.follow = m.follow && i == len(m.visible)-1
 			m.cursor = i
 			m.toggle()
@@ -221,17 +267,54 @@ func (m *model) entryAt(y int) (int, bool) {
 	return 0, false
 }
 
-// copySelected copia la entrada seleccionada entera, sin colores y con el
-// JSON ya formateado.
+// extend mueve el cursor con Mayús pulsada: la selección va desde donde
+// estaba al empezar (anchor) hasta el cursor.
+func (m *model) extend(k string) {
+	if len(m.visible) == 0 {
+		return
+	}
+	if m.anchor < 0 {
+		m.anchor = m.cursor
+	}
+	switch k {
+	case "shift+up":
+		m.up()
+	case "shift+down":
+		m.down()
+	case "shift+home":
+		m.cursor, m.top, m.skip = 0, 0, 0
+	case "shift+end":
+		m.cursor = len(m.visible) - 1
+		m.reveal()
+	}
+	// Mientras se selecciona no se sigue el log: las entradas nuevas
+	// moverían el cursor y agrandarían la selección.
+	m.follow = false
+	m.settle()
+}
+
+// selection devuelve la primera y la última entrada seleccionadas.
+func (m *model) selection() (int, int) {
+	if m.anchor < 0 {
+		return m.cursor, m.cursor
+	}
+	return min(m.anchor, m.cursor), max(m.anchor, m.cursor)
+}
+
+// copySelected copia las entradas seleccionadas enteras, sin colores y con
+// el JSON ya formateado.
 func (m *model) copySelected() tea.Cmd {
-	it := m.at(m.cursor)
-	if it == nil {
+	if m.at(m.cursor) == nil {
 		return nil
 	}
-	b := m.plain.Render(it.e)
-	text := strings.Join(append([]string{b.Head}, b.Body...), "\n")
-	lines, copyFn := 1+len(b.Body), m.copy
-	return func() tea.Msg { return copiedMsg{lines: lines, err: copyFn(text)} }
+	first, last := m.selection()
+	var out []string
+	for _, it := range m.visible[first : last+1] {
+		b := m.plain.Render(it.e)
+		out = append(append(out, b.Head), b.Body...)
+	}
+	text, entries, lines, copyFn := strings.Join(out, "\n"), last-first+1, len(out), m.copy
+	return func() tea.Msg { return copiedMsg{entries: entries, lines: lines, err: copyFn(text)} }
 }
 
 // copyToClipboard usa el portapapeles del sistema y, además, la secuencia
@@ -270,6 +353,9 @@ func (m *model) append(entries []*logs.Entry) {
 			if !m.follow {
 				m.unseen++
 			}
+			if m.matches(it, m.query) {
+				m.hits++
+			}
 		}
 	}
 	if len(m.items) > maxItems {
@@ -282,7 +368,8 @@ func (m *model) append(entries []*logs.Entry) {
 // refilter recalcula las entradas visibles conservando la seleccionada (o la
 // más cercana) y la primera de la pantalla.
 func (m *model) refilter() {
-	sel, top := m.at(m.cursor), m.at(m.top)
+	sel, top, anchor := m.at(m.cursor), m.at(m.top), m.at(m.anchor)
+	m.anchor = -1
 	m.visible = m.visible[:0]
 	m.cursor, m.top = -1, -1
 	for _, it := range m.items {
@@ -301,6 +388,9 @@ func (m *model) refilter() {
 		if (it == top || top == nil) && m.top < 0 {
 			m.top = len(m.visible)
 		}
+		if it == anchor {
+			m.anchor = len(m.visible)
+		}
 		m.visible = append(m.visible, it)
 	}
 	if m.cursor < 0 {
@@ -312,6 +402,7 @@ func (m *model) refilter() {
 	if m.cursor < 0 {
 		m.cursor, m.top, m.skip = 0, 0, 0
 	}
+	m.recount()
 }
 
 func (m *model) at(i int) *item {
@@ -571,6 +662,9 @@ func (m *model) toggle() {
 		return
 	}
 	it.open = !it.open
+	if it == m.autoOpen {
+		m.autoOpen = nil // ahora lo decide el usuario
+	}
 	if m.top == m.cursor {
 		m.skip = 0
 	}
@@ -582,6 +676,7 @@ func (m *model) toggle() {
 
 func (m *model) setAll(open bool) {
 	m.expand = open
+	m.autoOpen = nil
 	for _, it := range m.items {
 		it.open = open
 	}
@@ -635,6 +730,7 @@ func (m *model) View() string {
 		}
 		out = append(out, "  "+ui.MutedText(msg))
 	}
+	first, last := m.selection()
 	for i := m.top; i < len(m.visible) && len(out) < h; i++ {
 		it := m.visible[i]
 		rs := m.rows(it)
@@ -643,7 +739,7 @@ func (m *model) View() string {
 			start = m.skip
 		}
 		for j := start; j < len(rs) && len(out) < h; j++ {
-			out = append(out, m.gutter(it, i == m.cursor, j == 0)+rs[j])
+			out = append(out, m.gutter(it, i >= first && i <= last, j == 0)+highlight(rs[j], m.query))
 		}
 	}
 	for len(out) < h {
@@ -676,6 +772,13 @@ func (m *model) gutter(it *item, selected, first bool) string {
 func (m *model) status() string {
 	left := ui.Badge("lray") + " " + ui.Bold(m.cfg.Title) + "  " +
 		ui.MutedText(m.filter.String()+" · "+plural(len(m.visible), "entrada", "entradas"))
+	if m.anchor >= 0 {
+		first, last := m.selection()
+		left += "  " + barSt.Render(strconv.Itoa(last-first+1)+" seleccionadas")
+	}
+	if m.query != "" && !m.searching {
+		left += "  " + pausedSt.Render("⌕ «"+m.shown+"» "+m.hitInfo())
+	}
 	right := liveSt.Render("● en vivo")
 	switch {
 	case m.notice != "":
@@ -683,7 +786,7 @@ func (m *model) status() string {
 	case !m.follow:
 		right = pausedSt.Render("‖ en pausa")
 		if m.unseen > 0 {
-			right += pausedSt.Render(" · " + plural(m.unseen, "nueva", "nuevas") + " (G)")
+			right += pausedSt.Render(" · " + plural(m.unseen, "nueva", "nuevas") + " (h)")
 		}
 	}
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -694,8 +797,26 @@ func (m *model) status() string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
+// hitInfo dice cuántas coincidencias hay y en cuál está la selección.
+func (m *model) hitInfo() string {
+	switch {
+	case m.hits == 0:
+		return "sin coincidencias"
+	case m.hit > 0 && m.at(m.cursor) == m.hitItem:
+		return strconv.Itoa(m.hit) + "/" + strconv.Itoa(m.hits)
+	}
+	return plural(m.hits, "coincidencia", "coincidencias")
+}
+
 func (m *model) help() string {
-	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · y copiar · l nivel · g/G inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
+	if m.searching {
+		info := "⏎ aceptar · Esc cancelar"
+		if m.query != "" {
+			info = m.hitInfo() + " · " + info
+		}
+		return ansi.Truncate(barSt.Render(" Buscar: ")+string(m.input)+barSt.Render("▏")+"  "+ui.MutedText(info), m.width, "…")
+	}
+	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · Mayús+↑↓ seleccionar · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
 }
 
 func plural(n int, one, many string) string {
