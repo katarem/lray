@@ -1,6 +1,6 @@
 // Package logview es el visor de logs a pantalla completa: sigue el fichero en
-// vivo y deja plegar y desplegar stack traces y JSON, y cambiar de nivel sin
-// salir.
+// vivo y deja plegar y desplegar stack traces y JSON, cambiar de nivel sin
+// salir y separar con Enter, como en un tail -f.
 package logview
 
 import (
@@ -85,7 +85,8 @@ type (
 )
 
 type item struct {
-	e       *logs.Entry
+	e       *logs.Entry // nil en los separadores
+	sep     bool        // fila en blanco puesta con Enter, como en un tail -f
 	block   logs.Block
 	ready   bool
 	open    bool
@@ -110,6 +111,7 @@ type model struct {
 	follow  bool
 	expand  bool // estado de las entradas nuevas
 	unseen  int  // entradas nuevas mientras no se sigue el final
+	seps    int  // separadores entre las visibles
 	notice  string
 	noticeN int // para que solo borre el aviso el temporizador del último
 	plain   *logs.Renderer
@@ -214,7 +216,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end", "h", "G":
 			m.follow = true
 			m.settle()
-		case "enter", " ", "tab", "o":
+		case "enter":
+			return m, m.separate()
+		case " ", "tab", "o":
 			m.toggle()
 		case "e", "c":
 			m.setAll(msg.String() == "e")
@@ -309,11 +313,17 @@ func (m *model) copySelected() tea.Cmd {
 	}
 	first, last := m.selection()
 	var out []string
+	entries := 0
 	for _, it := range m.visible[first : last+1] {
+		if it.sep {
+			out = append(out, "")
+			continue
+		}
 		b := m.plain.Render(it.e)
 		out = append(append(out, b.Head), b.Body...)
+		entries++
 	}
-	text, entries, lines, copyFn := strings.Join(out, "\n"), last-first+1, len(out), m.copy
+	text, lines, copyFn := strings.Join(out, "\n"), len(out), m.copy
 	return func() tea.Msg { return copiedMsg{entries: entries, lines: lines, err: copyFn(text)} }
 }
 
@@ -348,7 +358,7 @@ func (m *model) append(entries []*logs.Entry) {
 	for _, e := range entries {
 		it := &item{e: e, open: m.expand}
 		m.items = append(m.items, it)
-		if m.filter.Allows(e.Level) {
+		if m.allows(it) {
 			m.visible = append(m.visible, it)
 			if !m.follow {
 				m.unseen++
@@ -365,15 +375,32 @@ func (m *model) append(entries []*logs.Entry) {
 	m.settle()
 }
 
+// separate añade una fila en blanco al final, como Enter en un tail -f, para
+// distinguir lo que llega a partir de ahora.
+func (m *model) separate() tea.Cmd {
+	it := &item{sep: true}
+	m.items = append(m.items, it)
+	m.visible = append(m.visible, it)
+	m.seps++
+	m.settle()
+	if !m.follow {
+		return m.say("Separador añadido al final (h para ir)")
+	}
+	return nil
+}
+
+// allows dice si la entrada pasa el filtro; los separadores siempre.
+func (m *model) allows(it *item) bool { return it.sep || m.filter.Allows(it.e.Level) }
+
 // refilter recalcula las entradas visibles conservando la seleccionada (o la
 // más cercana) y la primera de la pantalla.
 func (m *model) refilter() {
 	sel, top, anchor := m.at(m.cursor), m.at(m.top), m.at(m.anchor)
 	m.anchor = -1
 	m.visible = m.visible[:0]
-	m.cursor, m.top = -1, -1
+	m.cursor, m.top, m.seps = -1, -1, 0
 	for _, it := range m.items {
-		if !m.filter.Allows(it.e.Level) {
+		if !m.allows(it) {
 			if it == sel {
 				sel = nil // la siguiente visible hereda la selección
 			}
@@ -390,6 +417,9 @@ func (m *model) refilter() {
 		}
 		if it == anchor {
 			m.anchor = len(m.visible)
+		}
+		if it.sep {
+			m.seps++
 		}
 		m.visible = append(m.visible, it)
 	}
@@ -430,6 +460,12 @@ func (m *model) contentWidth() int {
 
 // rows devuelve las filas ya ajustadas al ancho de una entrada.
 func (m *model) rows(it *item) []string {
+	if it.sep {
+		if it.rows == nil {
+			it.rows, it.ready = []string{""}, true
+		}
+		return it.rows
+	}
 	if !it.ready {
 		it.block, it.ready = m.r.Render(it.e), true
 	}
@@ -771,7 +807,7 @@ func (m *model) gutter(it *item, selected, first bool) string {
 
 func (m *model) status() string {
 	left := ui.Badge("lray") + " " + ui.Bold(m.cfg.Title) + "  " +
-		ui.MutedText(m.filter.String()+" · "+plural(len(m.visible), "entrada", "entradas"))
+		ui.MutedText(m.filter.String()+" · "+plural(len(m.visible)-m.seps, "entrada", "entradas"))
 	if m.anchor >= 0 {
 		first, last := m.selection()
 		left += "  " + barSt.Render(strconv.Itoa(last-first+1)+" seleccionadas")
@@ -816,7 +852,7 @@ func (m *model) help() string {
 		}
 		return ansi.Truncate(barSt.Render(" Buscar: ")+string(m.input)+barSt.Render("▏")+"  "+ui.MutedText(info), m.width, "…")
 	}
-	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · Mayús+↑↓ seleccionar · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
+	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/espacio plegar · e/c todo · ⏎ separar · Mayús+↑↓ seleccionar · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
 }
 
 func plural(n int, one, many string) string {

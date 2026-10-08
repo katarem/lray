@@ -30,6 +30,9 @@ func lower(s string) string { return strings.Map(unicode.ToLower, s) }
 // searchText devuelve el texto en el que se busca: cabecera y cuerpo sin
 // colores, en minúsculas.
 func (m *model) searchText(it *item) string {
+	if !it.searchable && it.sep {
+		it.searchable = true // sin texto: nunca coincide
+	}
 	if !it.searchable {
 		b := m.plain.Render(it.e)
 		head := lower(b.Head)
