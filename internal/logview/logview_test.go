@@ -222,3 +222,116 @@ func TestCopy(t *testing.T) {
 		t.Errorf("el aviso debería desaparecer:\n%s", s)
 	}
 }
+
+func typeKeys(m *model, s string) {
+	for _, r := range s {
+		send(m, key(string(r)))
+	}
+}
+
+func TestSearch(t *testing.T) {
+	m := newModel(Config{})
+	var lines []string
+	for i := 0; i < 50; i++ {
+		msg := fmt.Sprintf("línea %d", i)
+		if i == 10 || i == 30 {
+			msg = fmt.Sprintf("Pedido %d rechazado", i)
+		}
+		lines = append(lines, fmt.Sprintf("2025-06-01 10:00:%02d.000 INFO  [main][X:1] %s", i%60, msg))
+	}
+	send(m, tea.WindowSizeMsg{Width: 100, Height: 10}, entries(lines...))
+
+	send(m, key("f"))
+	typeKeys(m, "RECHAZ")
+	if s := screen(m); !strings.Contains(s, "Buscar: RECHAZ") || !strings.Contains(s, "Pedido 30") || m.cursor != 30 {
+		t.Fatalf("debería saltar a la coincidencia más reciente mientras escribe (cursor %d):\n%s", m.cursor, s)
+	}
+	if !strings.Contains(m.View(), "\x1b[7mrechaz\x1b[27m") {
+		t.Errorf("la coincidencia debería verse resaltada:\n%q", m.View())
+	}
+	send(m, key("enter"))
+	if s := screen(m); !strings.Contains(s, "«RECHAZ» 2/2") || !strings.Contains(s, "en pausa") {
+		t.Fatalf("Enter debería aceptar la búsqueda:\n%s", s)
+	}
+
+	send(m, key("n"))
+	if s := screen(m); m.cursor != 10 || !strings.Contains(s, "«RECHAZ» 1/2") {
+		t.Fatalf("n debería ir a la anterior (cursor %d):\n%s", m.cursor, s)
+	}
+	send(m, key("n"))
+	if s := screen(m); m.cursor != 30 || !strings.Contains(s, "Sigo desde el final") {
+		t.Errorf("n en la primera debería dar la vuelta (cursor %d):\n%s", m.cursor, s)
+	}
+	send(m, key("N"))
+	if m.cursor != 10 {
+		t.Errorf("N debería ir a la siguiente dando la vuelta (cursor %d)", m.cursor)
+	}
+
+	send(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if s := screen(m); strings.Contains(s, "«RECHAZ»") || m.query != "" {
+		t.Errorf("Esc debería quitar la búsqueda:\n%s", s)
+	}
+}
+
+func TestSearchCancelRestores(t *testing.T) {
+	m := newModel(Config{})
+	var lines []string
+	for i := 0; i < 50; i++ {
+		lines = append(lines, fmt.Sprintf("2025-06-01 10:00:%02d.000 INFO  [main][X:1] línea %d", i%60, i))
+	}
+	send(m, tea.WindowSizeMsg{Width: 100, Height: 10}, entries(lines...))
+	send(m, key("f"))
+	typeKeys(m, "línea 3")
+	if m.cursor != 39 || m.follow {
+		t.Fatalf("debería estar en «línea 39», la más reciente (cursor %d)", m.cursor)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyBackspace}, tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.cursor != 49 {
+		t.Errorf("«línea » debería volver a la más reciente (cursor %d)", m.cursor)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if s := screen(m); m.searching || !m.follow || m.cursor != 49 || !strings.Contains(s, "en vivo") || m.query != "" {
+		t.Errorf("Esc mientras se escribe debería volver a donde estaba:\n%s", s)
+	}
+	send(m, key("f"))
+	typeKeys(m, "nada así")
+	send(m, key("enter"))
+	if s := screen(m); !strings.Contains(s, "Nada coincide con «nada así»") || m.cursor != 49 {
+		t.Errorf("sin coincidencias debería avisar y no moverse:\n%s", s)
+	}
+}
+
+func TestSearchOpensCollapsed(t *testing.T) {
+	m := newModel(Config{})
+	send(m, tea.WindowSizeMsg{Width: 100, Height: 20},
+		entries(append(stack, "2025-06-01 10:00:01.000 INFO  [main][X:1] después")...))
+	send(m, key("/"))
+	typeKeys(m, "b.java:2")
+	send(m, key("enter"))
+	if s := screen(m); m.cursor != 0 || !strings.Contains(s, "a.B.d(B.java:2)") {
+		t.Fatalf("debería desplegar la entrada con la coincidencia en el cuerpo:\n%s", s)
+	}
+	send(m, key("f"))
+	typeKeys(m, "después")
+	if s := screen(m); m.cursor != 1 || !strings.Contains(s, "a.B.d") {
+		t.Errorf("lo desplegado por una búsqueda aceptada se queda abierto:\n%s", s)
+	}
+	send(m, key("enter"), key("n"))
+	if m.cursor != 1 {
+		t.Errorf("la única coincidencia es «después» (cursor %d)", m.cursor)
+	}
+}
+
+func TestHighlight(t *testing.T) {
+	row := "\x1b[31mERROR\x1b[0m pedido \x1b[1mPEDIDO\x1b[0m"
+	got := highlight(row, "pedido")
+	if ansi.Strip(got) != ansi.Strip(row) {
+		t.Fatalf("el texto no debería cambiar: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[7mpedido\x1b[27m") || !strings.Contains(got, "\x1b[1m\x1b[7mPEDIDO") {
+		t.Errorf("resaltado: %q", got)
+	}
+	if highlight(row, "nada") != row {
+		t.Error("sin coincidencias no debería tocar la fila")
+	}
+}

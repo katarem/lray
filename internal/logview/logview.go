@@ -91,6 +91,10 @@ type item struct {
 	open    bool
 	rowsKey int
 	rows    []string
+	// para buscar: cabecera y cuerpo sin colores en minúsculas
+	text       string
+	headLen    int
+	searchable bool
 }
 
 type model struct {
@@ -111,6 +115,15 @@ type model struct {
 	copy    func(string) error
 	width   int
 	height  int
+
+	searching bool        // escribiendo en la barra de búsqueda
+	input     []rune      // lo escrito
+	query     string      // búsqueda activa, en minúsculas
+	shown     string      // la misma, tal cual se escribió
+	saved     searchState // para volver atrás con Esc
+	autoOpen  *item       // entrada desplegada por la búsqueda
+	hitItem   *item       // última coincidencia a la que se ha saltado
+	hits, hit int         // coincidencias visibles y posición de hitItem
 }
 
 func newModel(cfg Config) *model {
@@ -145,6 +158,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 		}
 	case tea.KeyMsg:
+		if m.searching {
+			return m, m.searchKey(msg)
+		}
 		if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 && !msg.Paste {
 			// Teclas pulsadas muy seguidas llegan juntas: una a una.
 			var cmd tea.Cmd
@@ -156,7 +172,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		case "esc":
+			if m.query != "" {
+				m.clearSearch()
+				return m, nil
+			}
+			return m, tea.Quit
+		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "down", "j":
 			m.down()
@@ -172,7 +194,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll(-m.viewHeight() / 2)
 		case "home", "g":
 			m.follow, m.cursor, m.top, m.skip = false, 0, 0, 0
-		case "end", "G", "f":
+		case "end", "G":
 			m.follow = true
 			m.settle()
 		case "enter", " ", "tab", "o":
@@ -183,6 +205,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cycleLevel()
 		case "y":
 			return m, m.copySelected()
+		case "f", "/":
+			m.startSearch()
+		case "n":
+			return m, m.next(-1)
+		case "N":
+			return m, m.next(1)
 		}
 	}
 	return m, nil
@@ -270,6 +298,9 @@ func (m *model) append(entries []*logs.Entry) {
 			if !m.follow {
 				m.unseen++
 			}
+			if m.matches(it, m.query) {
+				m.hits++
+			}
 		}
 	}
 	if len(m.items) > maxItems {
@@ -312,6 +343,7 @@ func (m *model) refilter() {
 	if m.cursor < 0 {
 		m.cursor, m.top, m.skip = 0, 0, 0
 	}
+	m.recount()
 }
 
 func (m *model) at(i int) *item {
@@ -571,6 +603,9 @@ func (m *model) toggle() {
 		return
 	}
 	it.open = !it.open
+	if it == m.autoOpen {
+		m.autoOpen = nil // ahora lo decide el usuario
+	}
 	if m.top == m.cursor {
 		m.skip = 0
 	}
@@ -582,6 +617,7 @@ func (m *model) toggle() {
 
 func (m *model) setAll(open bool) {
 	m.expand = open
+	m.autoOpen = nil
 	for _, it := range m.items {
 		it.open = open
 	}
@@ -643,7 +679,7 @@ func (m *model) View() string {
 			start = m.skip
 		}
 		for j := start; j < len(rs) && len(out) < h; j++ {
-			out = append(out, m.gutter(it, i == m.cursor, j == 0)+rs[j])
+			out = append(out, m.gutter(it, i == m.cursor, j == 0)+highlight(rs[j], m.query))
 		}
 	}
 	for len(out) < h {
@@ -676,6 +712,9 @@ func (m *model) gutter(it *item, selected, first bool) string {
 func (m *model) status() string {
 	left := ui.Badge("lray") + " " + ui.Bold(m.cfg.Title) + "  " +
 		ui.MutedText(m.filter.String()+" · "+plural(len(m.visible), "entrada", "entradas"))
+	if m.query != "" && !m.searching {
+		left += "  " + pausedSt.Render("⌕ «"+m.shown+"» "+m.hitInfo())
+	}
 	right := liveSt.Render("● en vivo")
 	switch {
 	case m.notice != "":
@@ -694,8 +733,26 @@ func (m *model) status() string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
+// hitInfo dice cuántas coincidencias hay y en cuál está la selección.
+func (m *model) hitInfo() string {
+	switch {
+	case m.hits == 0:
+		return "sin coincidencias"
+	case m.hit > 0 && m.at(m.cursor) == m.hitItem:
+		return strconv.Itoa(m.hit) + "/" + strconv.Itoa(m.hits)
+	}
+	return plural(m.hits, "coincidencia", "coincidencias")
+}
+
 func (m *model) help() string {
-	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · y copiar · l nivel · g/G inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
+	if m.searching {
+		info := "⏎ aceptar · Esc cancelar"
+		if m.query != "" {
+			info = m.hitInfo() + " · " + info
+		}
+		return ansi.Truncate(barSt.Render(" Buscar: ")+string(m.input)+barSt.Render("▏")+"  "+ui.MutedText(info), m.width, "…")
+	}
+	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/G inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
 }
 
 func plural(n int, one, many string) string {
