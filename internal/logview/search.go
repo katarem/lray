@@ -86,6 +86,7 @@ func (m *model) jump(i int) {
 	}
 	m.follow = false
 	m.cursor = i
+	m.anchor = -1
 	if m.top >= len(m.visible) || m.skip >= m.rowCount(m.top) {
 		m.skip = 0
 	}

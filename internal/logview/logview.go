@@ -78,8 +78,8 @@ func Run(parent context.Context, cfg Config, src logs.Source) error {
 type (
 	entriesMsg []*logs.Entry
 	copiedMsg  struct {
-		lines int
-		err   error
+		entries, lines int
+		err            error
 	}
 	noticeDoneMsg int
 )
@@ -104,6 +104,7 @@ type model struct {
 	items   []*item
 	visible []*item
 	cursor  int // índice en visible
+	anchor  int // otro extremo de la selección con Mayús+↑↓ (índice en visible); -1 si no hay
 	top     int // primera entrada pintada (índice en visible)
 	skip    int // filas de visible[top] que quedan por encima de la pantalla
 	follow  bool
@@ -134,6 +135,7 @@ func newModel(cfg Config) *model {
 		copy:   copyToClipboard,
 		filter: cfg.Filter,
 		follow: true,
+		anchor: -1,
 	}
 }
 
@@ -151,6 +153,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case copiedMsg:
 		if msg.err != nil {
 			return m, m.say("✘ No he podido copiar: " + msg.err.Error())
+		}
+		if msg.entries > 1 {
+			return m, m.say("✔ Copiadas " + strconv.Itoa(msg.entries) + " entradas al portapapeles (" + plural(msg.lines, "línea", "líneas") + ")")
 		}
 		return m, m.say("✔ Copiada al portapapeles (" + plural(msg.lines, "línea", "líneas") + ")")
 	case noticeDoneMsg:
@@ -171,8 +176,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
-		switch msg.String() {
+		k := msg.String()
+		switch k {
+		case "shift+up", "shift+down", "shift+home", "shift+end":
+			m.extend(k)
+			return m, nil
+		case "down", "j", "up", "k", "pgdown", "ctrl+f", "pgup", "ctrl+b", "ctrl+d", "ctrl+u", "home", "g", "end", "h", "G":
+			m.anchor = -1 // moverse sin Mayús deja solo la entrada del cursor
+		}
+		switch k {
 		case "esc":
+			if m.anchor >= 0 {
+				m.anchor = -1
+				return m, nil
+			}
 			if m.query != "" {
 				m.clearSearch()
 				return m, nil
@@ -226,6 +243,7 @@ func (m *model) mouse(msg tea.MouseMsg) {
 		m.scroll(3)
 	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
 		if i, ok := m.entryAt(msg.Y); ok {
+			m.anchor = -1
 			m.follow = m.follow && i == len(m.visible)-1
 			m.cursor = i
 			m.toggle()
@@ -249,17 +267,54 @@ func (m *model) entryAt(y int) (int, bool) {
 	return 0, false
 }
 
-// copySelected copia la entrada seleccionada entera, sin colores y con el
-// JSON ya formateado.
+// extend mueve el cursor con Mayús pulsada: la selección va desde donde
+// estaba al empezar (anchor) hasta el cursor.
+func (m *model) extend(k string) {
+	if len(m.visible) == 0 {
+		return
+	}
+	if m.anchor < 0 {
+		m.anchor = m.cursor
+	}
+	switch k {
+	case "shift+up":
+		m.up()
+	case "shift+down":
+		m.down()
+	case "shift+home":
+		m.cursor, m.top, m.skip = 0, 0, 0
+	case "shift+end":
+		m.cursor = len(m.visible) - 1
+		m.reveal()
+	}
+	// Mientras se selecciona no se sigue el log: las entradas nuevas
+	// moverían el cursor y agrandarían la selección.
+	m.follow = false
+	m.settle()
+}
+
+// selection devuelve la primera y la última entrada seleccionadas.
+func (m *model) selection() (int, int) {
+	if m.anchor < 0 {
+		return m.cursor, m.cursor
+	}
+	return min(m.anchor, m.cursor), max(m.anchor, m.cursor)
+}
+
+// copySelected copia las entradas seleccionadas enteras, sin colores y con
+// el JSON ya formateado.
 func (m *model) copySelected() tea.Cmd {
-	it := m.at(m.cursor)
-	if it == nil {
+	if m.at(m.cursor) == nil {
 		return nil
 	}
-	b := m.plain.Render(it.e)
-	text := strings.Join(append([]string{b.Head}, b.Body...), "\n")
-	lines, copyFn := 1+len(b.Body), m.copy
-	return func() tea.Msg { return copiedMsg{lines: lines, err: copyFn(text)} }
+	first, last := m.selection()
+	var out []string
+	for _, it := range m.visible[first : last+1] {
+		b := m.plain.Render(it.e)
+		out = append(append(out, b.Head), b.Body...)
+	}
+	text, entries, lines, copyFn := strings.Join(out, "\n"), last-first+1, len(out), m.copy
+	return func() tea.Msg { return copiedMsg{entries: entries, lines: lines, err: copyFn(text)} }
 }
 
 // copyToClipboard usa el portapapeles del sistema y, además, la secuencia
@@ -313,7 +368,8 @@ func (m *model) append(entries []*logs.Entry) {
 // refilter recalcula las entradas visibles conservando la seleccionada (o la
 // más cercana) y la primera de la pantalla.
 func (m *model) refilter() {
-	sel, top := m.at(m.cursor), m.at(m.top)
+	sel, top, anchor := m.at(m.cursor), m.at(m.top), m.at(m.anchor)
+	m.anchor = -1
 	m.visible = m.visible[:0]
 	m.cursor, m.top = -1, -1
 	for _, it := range m.items {
@@ -331,6 +387,9 @@ func (m *model) refilter() {
 		}
 		if (it == top || top == nil) && m.top < 0 {
 			m.top = len(m.visible)
+		}
+		if it == anchor {
+			m.anchor = len(m.visible)
 		}
 		m.visible = append(m.visible, it)
 	}
@@ -671,6 +730,7 @@ func (m *model) View() string {
 		}
 		out = append(out, "  "+ui.MutedText(msg))
 	}
+	first, last := m.selection()
 	for i := m.top; i < len(m.visible) && len(out) < h; i++ {
 		it := m.visible[i]
 		rs := m.rows(it)
@@ -679,7 +739,7 @@ func (m *model) View() string {
 			start = m.skip
 		}
 		for j := start; j < len(rs) && len(out) < h; j++ {
-			out = append(out, m.gutter(it, i == m.cursor, j == 0)+highlight(rs[j], m.query))
+			out = append(out, m.gutter(it, i >= first && i <= last, j == 0)+highlight(rs[j], m.query))
 		}
 	}
 	for len(out) < h {
@@ -712,6 +772,10 @@ func (m *model) gutter(it *item, selected, first bool) string {
 func (m *model) status() string {
 	left := ui.Badge("lray") + " " + ui.Bold(m.cfg.Title) + "  " +
 		ui.MutedText(m.filter.String()+" · "+plural(len(m.visible), "entrada", "entradas"))
+	if m.anchor >= 0 {
+		first, last := m.selection()
+		left += "  " + barSt.Render(strconv.Itoa(last-first+1)+" seleccionadas")
+	}
 	if m.query != "" && !m.searching {
 		left += "  " + pausedSt.Render("⌕ «"+m.shown+"» "+m.hitInfo())
 	}
@@ -752,7 +816,7 @@ func (m *model) help() string {
 		}
 		return ansi.Truncate(barSt.Render(" Buscar: ")+string(m.input)+barSt.Render("▏")+"  "+ui.MutedText(info), m.width, "…")
 	}
-	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
+	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · Mayús+↑↓ seleccionar · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
 }
 
 func plural(n int, one, many string) string {

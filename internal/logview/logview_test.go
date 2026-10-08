@@ -335,3 +335,46 @@ func TestHighlight(t *testing.T) {
 		t.Error("sin coincidencias no debería tocar la fila")
 	}
 }
+
+func TestShiftSelect(t *testing.T) {
+	m := newModel(Config{})
+	var copied string
+	m.copy = func(s string) error { copied = s; return nil }
+	send(m, tea.WindowSizeMsg{Width: 100, Height: 20}, entries(append([]string{
+		"2025-06-01 09:59:58.000 INFO  [main][X:1] uno",
+		"2025-06-01 09:59:59.000 INFO  [main][X:1] dos",
+	}, stack...)...))
+	shiftUp := tea.KeyMsg{Type: tea.KeyShiftUp}
+	send(m, shiftUp, shiftUp)
+	if s := screen(m); !strings.Contains(s, "3 seleccionadas") || m.follow {
+		t.Fatalf("Mayús+↑ debería seleccionar varias entradas y pausar:\n%s", s)
+	}
+	_, cmd := m.Update(key("y"))
+	send(m, cmd())
+	want := strings.Join(append([]string{
+		"2025-06-01 09:59:58.000 INFO  [main][X:1] uno",
+		"2025-06-01 09:59:59.000 INFO  [main][X:1] dos",
+	}, stack...), "\n")
+	if copied != want {
+		t.Errorf("copiado %q; quiero %q", copied, want)
+	}
+	if s := screen(m); !strings.Contains(s, "Copiadas 3 entradas al portapapeles (6 líneas)") {
+		t.Errorf("falta el aviso:\n%s", s)
+	}
+	if got := strings.Count(screen(m), "▌"); got < 4 { // uno, dos y las dos filas del error plegado
+		t.Errorf("las entradas seleccionadas deberían llevar la barra (%d):\n%s", got, screen(m))
+	}
+
+	send(m, tea.KeyMsg{Type: tea.KeyShiftDown})
+	if s := screen(m); !strings.Contains(s, "2 seleccionadas") {
+		t.Errorf("Mayús+↓ debería encoger la selección:\n%s", s)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if s := screen(m); strings.Contains(s, "seleccionadas") || m.anchor >= 0 {
+		t.Errorf("Esc debería quitar la selección sin salir:\n%s", s)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyShiftUp}, key("up"))
+	if m.anchor >= 0 {
+		t.Error("moverse sin Mayús debería quitar la selección")
+	}
+}
