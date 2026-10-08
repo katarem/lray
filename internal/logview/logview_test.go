@@ -118,9 +118,9 @@ func TestScrollPausesAndResumes(t *testing.T) {
 	if s := screen(m); strings.Contains(s, "] nueva") || !strings.Contains(s, "1 nueva") {
 		t.Errorf("en pausa no debería moverse, solo avisar:\n%s", s)
 	}
-	send(m, key("G"))
+	send(m, key("h"))
 	if s := screen(m); !strings.Contains(s, "] nueva") || !strings.Contains(s, "en vivo") {
-		t.Errorf("G debería volver al final:\n%s", s)
+		t.Errorf("h debería volver al final:\n%s", s)
 	}
 }
 

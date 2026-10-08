@@ -194,7 +194,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll(-m.viewHeight() / 2)
 		case "home", "g":
 			m.follow, m.cursor, m.top, m.skip = false, 0, 0, 0
-		case "end", "G":
+		case "end", "h", "G":
 			m.follow = true
 			m.settle()
 		case "enter", " ", "tab", "o":
@@ -722,7 +722,7 @@ func (m *model) status() string {
 	case !m.follow:
 		right = pausedSt.Render("‖ en pausa")
 		if m.unseen > 0 {
-			right += pausedSt.Render(" · " + plural(m.unseen, "nueva", "nuevas") + " (G)")
+			right += pausedSt.Render(" · " + plural(m.unseen, "nueva", "nuevas") + " (h)")
 		}
 	}
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -752,7 +752,7 @@ func (m *model) help() string {
 		}
 		return ansi.Truncate(barSt.Render(" Buscar: ")+string(m.input)+barSt.Render("▏")+"  "+ui.MutedText(info), m.width, "…")
 	}
-	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/G inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
+	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/⏎ plegar · e/c todo · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
 }
 
 func plural(n int, one, many string) string {
