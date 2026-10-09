@@ -230,7 +230,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.startSearch()
 		case "n":
 			return m, m.next(-1)
-		case "N":
+		case "m", "N":
 			return m, m.next(1)
 		}
 	}
@@ -852,7 +852,7 @@ func (m *model) help() string {
 		}
 		return ansi.Truncate(barSt.Render(" Buscar: ")+string(m.input)+barSt.Render("▏")+"  "+ui.MutedText(info), m.width, "…")
 	}
-	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/espacio plegar · e/c todo · ⏎ separar · Mayús+↑↓ seleccionar · y copiar · f buscar · n/N anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
+	return ansi.Truncate(ui.MutedText(" ↑↓/rueda moverse · clic/espacio plegar · e/c desplegar/plegar todo · ⏎ separar · Mayús+↑↓ seleccionar · y copiar · f buscar · n/m anterior/siguiente · l nivel · g/h inicio/final · q salir · Mayús+arrastrar selecciona texto  "+m.cfg.Detail), m.width, "…")
 }
 
 func plural(n int, one, many string) string {

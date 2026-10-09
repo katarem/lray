@@ -308,9 +308,9 @@ func TestSearch(t *testing.T) {
 	if s := screen(m); m.cursor != 30 || !strings.Contains(s, "Sigo desde el final") {
 		t.Errorf("n en la primera debería dar la vuelta (cursor %d):\n%s", m.cursor, s)
 	}
-	send(m, key("N"))
+	send(m, key("m"))
 	if m.cursor != 10 {
-		t.Errorf("N debería ir a la siguiente dando la vuelta (cursor %d)", m.cursor)
+		t.Errorf("m debería ir a la siguiente dando la vuelta (cursor %d)", m.cursor)
 	}
 
 	send(m, tea.KeyMsg{Type: tea.KeyEsc})

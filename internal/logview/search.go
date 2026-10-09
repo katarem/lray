@@ -12,7 +12,7 @@ import (
 // La búsqueda (f o /) mira el texto de las entradas sin colores y con el JSON
 // ya formateado, sin distinguir mayúsculas. Mientras se escribe salta a la
 // coincidencia más cercana por encima de la selección (lo más reciente
-// primero, que en un log es lo que interesa); Enter la acepta y n/N recorren
+// primero, que en un log es lo que interesa); Enter la acepta y n/m recorren
 // las demás hacia arriba/abajo. Si la coincidencia está en el cuerpo de una
 // entrada plegada, la despliega, y la vuelve a plegar al pasar a otra.
 
