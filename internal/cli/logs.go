@@ -28,7 +28,8 @@ func newLogs() *cobra.Command {
 
 Abre un visor a pantalla completa que sigue el log en vivo: los stack traces y
 el JSON se agrupan con la línea a la que pertenecen y se pliegan y despliegan
-con Enter. El JSON se indenta y colorea (--json).
+con espacio; Enter deja una línea en blanco para separar lo que llega después,
+como en un tail -f. El JSON se indenta y colorea (--json).
 
 Con --plain (o sin terminal) las líneas se imprimen seguidas, como un tail -f;
 --collapse resume ahí cada stack trace o JSON en una línea.`,

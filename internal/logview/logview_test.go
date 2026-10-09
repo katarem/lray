@@ -65,9 +65,9 @@ func TestCollapseAndExpand(t *testing.T) {
 		t.Errorf("barra de estado:\n%s", s)
 	}
 
-	send(m, key("enter")) // la seleccionada es la última (se sigue el log)
+	send(m, key(" ")) // la seleccionada es la última (se sigue el log)
 	if s := screen(m); !strings.Contains(s, "\tat a.B.d") && !strings.Contains(s, "at a.B.d(B.java:2)") {
-		t.Fatalf("Enter debería desplegar:\n%s", s)
+		t.Fatalf("espacio debería desplegar:\n%s", s)
 	}
 	send(m, key("c"))
 	if s := screen(m); strings.Contains(s, "a.B.d") {
@@ -223,6 +223,52 @@ func TestCopy(t *testing.T) {
 	}
 }
 
+func TestSeparator(t *testing.T) {
+	m := newModel(Config{Filter: logs.Filter{Min: logs.LevelWarn}})
+	var got string
+	m.copy = func(s string) error { got = s; return nil }
+	send(m, tea.WindowSizeMsg{Width: 100, Height: 12}, entries(stack...))
+	send(m, key("enter"), key("enter"))
+	if m.at(m.cursor) == nil || m.at(0).open {
+		t.Fatal("Enter no debería desplegar")
+	}
+	send(m, entries("2025-06-01 10:00:01.000 WARN  [main][X:1] después"))
+	lines := strings.Split(screen(m), "\n")
+	i := 0
+	for i < len(lines) && !strings.Contains(lines[i], "· 3 líneas") {
+		i++
+	}
+	if i+3 >= len(lines) || strings.TrimSpace(lines[i+1]) != "" || strings.TrimSpace(lines[i+2]) != "" || !strings.Contains(lines[i+3], "después") {
+		t.Fatalf("Enter debería dejar dos filas en blanco antes de lo nuevo:\n%s", strings.Join(lines, "\n"))
+	}
+	if s := screen(m); !strings.Contains(s, "2 entradas") {
+		t.Errorf("los separadores no cuentan como entradas:\n%s", s)
+	}
+
+	send(m, key("l")) // warn → error: los separadores se quedan
+	if s := screen(m); strings.Contains(s, "después") || !strings.Contains(s, "1 entrada") || len(m.visible) != 3 {
+		t.Errorf("el filtro no debería quitar los separadores:\n%s", s)
+	}
+	send(m, key("l"))
+
+	send(m, key("f"))
+	typeKeys(m, "runtime")
+	if m.hits != 1 {
+		t.Errorf("los separadores no deberían coincidir con nada (%d coincidencias)", m.hits)
+	}
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+	send(m, esc, esc)
+
+	m.cursor, m.anchor = 3, 0
+	send(m, m.copySelected()())
+	if want := strings.Join(stack, "\n") + "\n\n\n2025-06-01 10:00:01.000 WARN  [main][X:1] después"; got != want {
+		t.Errorf("copiado %q; quiero %q", got, want)
+	}
+	if s := screen(m); !strings.Contains(s, "Copiadas 2 entradas") {
+		t.Errorf("aviso:\n%s", s)
+	}
+}
+
 func typeKeys(m *model, s string) {
 	for _, r := range s {
 		send(m, key(string(r)))
@@ -262,9 +308,9 @@ func TestSearch(t *testing.T) {
 	if s := screen(m); m.cursor != 30 || !strings.Contains(s, "Sigo desde el final") {
 		t.Errorf("n en la primera debería dar la vuelta (cursor %d):\n%s", m.cursor, s)
 	}
-	send(m, key("N"))
+	send(m, key("m"))
 	if m.cursor != 10 {
-		t.Errorf("N debería ir a la siguiente dando la vuelta (cursor %d)", m.cursor)
+		t.Errorf("m debería ir a la siguiente dando la vuelta (cursor %d)", m.cursor)
 	}
 
 	send(m, tea.KeyMsg{Type: tea.KeyEsc})
