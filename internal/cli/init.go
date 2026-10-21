@@ -15,8 +15,9 @@ import (
 func newInit() *cobra.Command {
 	var dir, javaHome, product, pluginVersion string
 	cmd := &cobra.Command{
-		Use:   "init <nombre>",
-		Short: "Crea un workspace de Liferay nuevo y lo añade a la lista",
+		Use:         "init <nombre>",
+		Annotations: changesServers,
+		Short:       "Crea un workspace de Liferay nuevo y lo añade a la lista",
 		Example: `  lray server init tienda
   lray server init tienda --dir ~/proyectos --product dxp-2025.q2.12-lts`,
 		Args: cobra.ExactArgs(1),

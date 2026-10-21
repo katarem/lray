@@ -19,8 +19,9 @@ func newAdd() *cobra.Command {
 	var yes bool
 	var rf remoteFlags
 	cmd := &cobra.Command{
-		Use:   "add <nombre> <ruta>",
-		Short: "Añade a la lista un workspace o bundle que ya tienes, en tu máquina o en otra por SSH",
+		Use:         "add <nombre> <ruta>",
+		Annotations: changesServers,
+		Short:       "Añade a la lista un workspace o bundle que ya tienes, en tu máquina o en otra por SSH",
 		Long: `Añade a la lista un workspace o bundle que ya tienes.
 
 La ruta puede estar en otra máquina: usuario@máquina:/ruta o

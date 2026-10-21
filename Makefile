@@ -15,6 +15,7 @@ install: build
 	install -d $(PREFIX)/bin
 	install -m 0755 bin/$(BIN) $(PREFIX)/bin/$(BIN)
 	@echo "Instalado en $(PREFIX)/bin/$(BIN)"
+	@[ -n "$$LRAY_NO_COMPLETIONS" ] || $(PREFIX)/bin/$(BIN) __install-completions || true
 
 uninstall:
 	rm -f $(PREFIX)/bin/$(BIN)

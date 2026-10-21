@@ -11,6 +11,7 @@ lray server rm <nombre>            Lo quita de la lista (no borra archivos)
 lray server list                   Nombre, versión, estado y puerto de cada server
 lray server start <nombre>         Arranca y espera a que esté listo
 lray server stop <nombre>          Para el server
+lray server restart <nombre>       Lo para y lo vuelve a arrancar, esperando a que esté listo
 lray server logs <nombre>          Visor de logs en vivo: colores, JSON legible, entradas plegables
 lray server dev <nombre>           start + logs; al salir pregunta si apagarlo
 lray server deploy <nombre>        Compila y despliega (todo o el módulo actual)
@@ -19,6 +20,7 @@ lray workspace create [nombre]     Asistente para crear un Liferay Workspace
 lray module create [nombre]        Asistente para crear un módulo (como blade create)
 
 lray update                        Comprueba si hay versión nueva y la instala
+lray debug report                  Genera un informe para mandar si algo falla
 ```
 
 ## Instalación
@@ -68,18 +70,9 @@ make install         # compila e instala en ~/.local/bin
 
 ### Autocompletado (incluye los nombres de tus servers)
 
-```sh
-# zsh: añádelo a ~/.zshrc
-source <(lray completion zsh)
+No tienes que hacer nada: lray lo instala solo al instalarlo o actualizarlo (con `install.sh`, `lray update`, `make install` o, con Homebrew y `go install`, en el primer comando que ejecutes) en bash, zsh y fish, y en PowerShell en Windows. Guarda el script de cada shell en `~/.local/share/lray/completion/` (fish, en `~/.config/fish/completions/`) y lo carga desde tu `~/.bashrc` / `~/.zshrc` con un bloque marcado (`# >>> lray: autocompletado ...`) que mantiene él mismo. Abre una terminal nueva para notarlo.
 
-# bash: añádelo a ~/.bashrc
-source <(lray completion bash)
-
-# fish
-lray completion fish > ~/.config/fish/completions/lray.fish
-```
-
-Con Homebrew el autocompletado ya viene instalado.
+Los nombres de los servers se piden a lray al pulsar Tab, así que los que añades o quitas aparecen al momento; además, `server add`/`rm`/`init` y `workspace create` lo refrescan por si faltara algo. Si tenías una línea antigua con `lray completion ...` (ese comando ya no existe), lray la comenta para que no dé error. Si prefieres gestionarlo tú, `LRAY_NO_COMPLETIONS=1` lo desactiva.
 
 ## Uso
 
@@ -156,6 +149,7 @@ Al añadirlo, lray comprueba que su puerto HTTP (y el de apagado) esté libre en
 lray server start tienda                 # espera a "Server startup in" mostrando el progreso
 lray server start tienda --no-wait
 lray server stop tienda                  # SIGTERM ordenado; a los 60 s fuerza la parada
+lray server restart tienda               # para, espera a que se apague y vuelve a arrancar
 lray server logs tienda                  # visor en vivo con las últimas 100 líneas
 lray server logs tienda -n 500 --level warn
 lray server logs tienda --only error,debug
@@ -206,6 +200,19 @@ Descarga el archivo de tu sistema de la última release de GitHub, verifica su c
 
 Además, lray lo comprueba solo como mucho una vez al día y, si hay versión nueva, te avisa con una línea al terminar un comando. No avisa si la salida no es una terminal ni en builds de desarrollo, y se desactiva con `LRAY_NO_UPDATE_CHECK=1`.
 
+### Si algo falla
+
+lray apunta siempre lo que hace (cada comando, sus errores y cada llamada a `ssh` con lo que respondió) en un log de depuración que rota solo al pasar de 2 MB.
+
+```sh
+lray debug log               # lo último del log
+lray debug log -n 300
+lray debug report            # informe en lray-report-<fecha>.txt para adjuntar a un issue
+lray server list --sync --debug   # cualquier comando con --debug enseña el log en vivo
+```
+
+El informe lleva la versión de lray y del sistema, la de `ssh`, tus servers y su último estado, las sesiones SSH abiertas, el estado del autocompletado y lo último del log. Incluye rutas y nombres de máquinas, nunca contraseñas: revísalo antes de mandarlo.
+
 ## Dónde guarda las cosas
 
 | Qué | Dónde |
@@ -214,6 +221,9 @@ Además, lray lo comprueba solo como mucho una vez al día y, si hay versión nu
 | PID del server | `<liferay home>/.lray.pid` |
 | Caché de versiones | carpeta de caché del usuario, `lray/releases.json` |
 | Última versión de lray consultada | carpeta de caché del usuario, `lray/update.json` |
+| Log de depuración | carpeta de caché del usuario, `lray/lray.log` (y `lray.log.1`) |
+| Sesiones SSH compartidas | carpeta de caché del usuario, `lray/ssh/` |
+| Autocompletado | `~/.local/share/lray/completion/` + un bloque en `~/.bashrc` / `~/.zshrc` |
 
 Otras variables de entorno:
 
@@ -221,6 +231,8 @@ Otras variables de entorno:
 - `LRAY_LOGS_LEVEL` y `LRAY_LOGS_JSON` dan el valor por defecto de `--level` y `--json` en `logs` y `dev` (por ejemplo, `LRAY_LOGS_JSON=compact`).
 - `LRAY_WORKSPACE_PLUGIN_VERSION` cambia la versión del plugin de workspace que usan `server init` y `workspace create` (por defecto, la indicada en `internal/scaffold/workspace.go`). También se puede indicar con `--plugin-version`.
 - `LRAY_NO_UPDATE_CHECK=1` desactiva el aviso de versión nueva.
+- `LRAY_NO_COMPLETIONS=1` hace que lray no instale ni toque el autocompletado.
+- `LRAY_DEBUG=1` equivale a `--debug` en todos los comandos.
 - `LRAY_REPO=otro/lray` hace que `lray update` busque las releases en un fork (igual que en `install.sh`).
 
 ## Distribuirlo

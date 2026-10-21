@@ -36,8 +36,9 @@ func newWorkspaceCreate() *cobra.Command {
 	var dir, javaHome, product, pluginVersion string
 	var noRegister, bundle, yes bool
 	cmd := &cobra.Command{
-		Use:   "create [nombre]",
-		Short: "Crea un Liferay Workspace nuevo con un asistente",
+		Use:         "create [nombre]",
+		Annotations: changesServers,
+		Short:       "Crea un Liferay Workspace nuevo con un asistente",
 		Long: `Crea un Liferay Workspace (Gradle) preguntándote lo necesario: nombre,
 carpeta, edición y versión de Liferay, si lo añades a tu lista de servers y
 si descargas ya el bundle. Lo que pases como opción ya no se pregunta.`,

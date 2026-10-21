@@ -13,6 +13,7 @@ lray server rm <name>              Remove it from the list (files are not delete
 lray server list                   Name, version, state and port of each server
 lray server start <name>           Start it and wait until it is ready
 lray server stop <name>            Stop the server
+lray server restart <name>         Stop it and start it again, waiting until it is ready
 lray server logs <name>            Live logs colored by level
 lray server dev <name>             start + logs; on exit asks whether to stop it
 lray server deploy <name>          Build and deploy (everything or the current module)
@@ -21,6 +22,7 @@ lray workspace create [name]       Wizard to create a Liferay Workspace
 lray module create [name]          Wizard to create a module (like blade create)
 
 lray update                        Check for a new version and install it
+lray debug report                  Build a report to send when something fails
 ```
 
 ## Installation
@@ -70,18 +72,9 @@ make install         # builds and installs in ~/.local/bin
 
 ### Shell completion (includes your server names)
 
-```sh
-# zsh: add it to ~/.zshrc
-source <(lray completion zsh)
+Nothing to do: lray installs it by itself when it is installed or updated (with `install.sh`, `lray update`, `make install` or, with Homebrew and `go install`, on the first command you run) for bash, zsh and fish, and PowerShell on Windows. It keeps each shell's script in `~/.local/share/lray/completion/` (fish: `~/.config/fish/completions/`) and loads it from your `~/.bashrc` / `~/.zshrc` with a marked block (`# >>> lray: autocompletado ...`) that it maintains itself. Open a new terminal to pick it up.
 
-# bash: add it to ~/.bashrc
-source <(lray completion bash)
-
-# fish
-lray completion fish > ~/.config/fish/completions/lray.fish
-```
-
-With Homebrew, completion is already installed.
+Server names are asked to lray when you press Tab, so the ones you add or remove show up right away; `server add`/`rm`/`init` and `workspace create` also refresh it in case something is missing. An old `lray completion ...` line (that command no longer exists) gets commented out so it does not fail. If you'd rather manage it yourself, `LRAY_NO_COMPLETIONS=1` turns it off.
 
 ## Usage
 
@@ -158,6 +151,7 @@ When adding it, lray checks that its HTTP port (and shutdown port) is free on th
 lray server start store                  # waits for "Server startup in" showing progress
 lray server start store --no-wait
 lray server stop store                   # graceful SIGTERM; forces it after 60 s
+lray server restart store                # stop, wait until it is down, start again
 lray server logs store                   # last 100 lines and keeps following
 lray server logs store -n 500 --level warn
 lray server dev store                    # starts it and attaches to the logs
@@ -192,6 +186,19 @@ It downloads the archive for your system from the latest GitHub release, verifie
 
 lray also checks on its own at most once a day and, if there is a new version, prints a one-line notice when a command finishes. It stays quiet when output is not a terminal and in development builds, and `LRAY_NO_UPDATE_CHECK=1` turns it off.
 
+### When something fails
+
+lray always records what it does (each command, its errors and every `ssh` call with its answer) in a debug log that rotates past 2 MB.
+
+```sh
+lray debug log               # the latest lines
+lray debug log -n 300
+lray debug report            # report in lray-report-<date>.txt to attach to an issue
+lray server list --sync --debug   # any command with --debug shows the log live
+```
+
+The report holds the lray and system versions, the `ssh` version, your servers and their last state, open SSH sessions, the completion status and the end of the log. It includes paths and host names, never passwords: review it before sending it.
+
 ## Where things are stored
 
 | What | Where |
@@ -200,12 +207,17 @@ lray also checks on its own at most once a day and, if there is a new version, p
 | Server PID | `<liferay home>/.lray.pid` |
 | Release cache | user cache folder, `lray/releases.json` |
 | Last lray version seen | user cache folder, `lray/update.json` |
+| Debug log | user cache folder, `lray/lray.log` (and `lray.log.1`) |
+| Shared SSH sessions | user cache folder, `lray/ssh/` |
+| Shell completion | `~/.local/share/lray/completion/` + a block in `~/.bashrc` / `~/.zshrc` |
 
 Other environment variables:
 
 - `NO_COLOR=1` disables colors in `logs`.
 - `LRAY_WORKSPACE_PLUGIN_VERSION` changes the workspace plugin version used by `server init` and `workspace create` (default: the one in `internal/scaffold/workspace.go`). Also available as `--plugin-version`.
 - `LRAY_NO_UPDATE_CHECK=1` turns off the new-version notice.
+- `LRAY_NO_COMPLETIONS=1` stops lray from installing or touching shell completion.
+- `LRAY_DEBUG=1` is the same as `--debug` on every command.
 - `LRAY_REPO=other/lray` makes `lray update` look for releases in a fork (same as `install.sh`).
 
 ## Distribution

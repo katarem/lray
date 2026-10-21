@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode"
@@ -15,27 +17,52 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/katarem/lray/internal/config"
+	"github.com/katarem/lray/internal/debuglog"
 	"github.com/katarem/lray/internal/liferay"
+	"github.com/katarem/lray/internal/ssh"
 	"github.com/katarem/lray/internal/ui"
 	"github.com/katarem/lray/internal/update"
 )
 
 // Execute ejecuta lray y devuelve el código de salida.
-func Execute(version string) int {
+func Execute(version string) (code int) {
+	args := os.Args[1:]
+	if !internalCommand(args) {
+		debuglog.Open()
+		defer debuglog.Close()
+		ssh.Debug = debuglog.Printf
+	}
+	start := time.Now()
+	debuglog.Printf("lray %s (%s/%s, %s) · %s", version, runtime.GOOS, runtime.GOARCH, runtime.Version(), strings.Join(args, " "))
+	defer func() {
+		if r := recover(); r != nil {
+			debuglog.Printf("pánico: %v\n%s", r, debug.Stack())
+			ui.Say(ui.Sad, "Algo se ha roto dentro de lray",
+				fmt.Sprint(r),
+				ui.MutedText("Es un fallo de lray. Ayúdame a arreglarlo mandando el informe de ")+ui.Code("lray debug report"))
+			code = 2
+		}
+		debuglog.Printf("fin: código %d en %s", code, time.Since(start).Round(time.Millisecond))
+	}()
+
 	update.CleanupOld()
-	notifyUpdate := startUpdateCheck(version, os.Args[1:])
+	notifyUpdate := startUpdateCheck(version, args)
 	root := newRoot(version)
 	root.Version = version
 	root.SetVersionTemplate("lray {{.Version}}\n")
 	root.Flags().BoolP("version", "v", false, "Muestra la versión")
+	notifyCompletions := ensureCompletions(root, version, args)
 	if err := root.ExecuteContext(context.Background()); err != nil {
+		debuglog.Printf("error: %v", err)
 		if errors.Is(err, huh.ErrUserAborted) || errors.Is(err, ui.ErrInterrupted) {
 			ui.Say(ui.Sleepy, "Vale, lo dejamos aquí.")
 			return 130
 		}
-		ui.Say(ui.Sad, "No he podido hacerlo", capitalize(err.Error()))
+		ui.Say(ui.Sad, "No he podido hacerlo", capitalize(err.Error()),
+			ui.MutedText("¿Crees que es un fallo de lray? Genera un informe con ")+ui.Code("lray debug report"))
 		return 1
 	}
+	notifyCompletions()
 	notifyUpdate()
 	return 0
 }
@@ -54,16 +81,30 @@ func newRoot(version string) *cobra.Command {
 		},
 	}
 	root.PersistentFlags().BoolP("help", "h", false, "Muestra la ayuda")
+	root.PersistentFlags().Bool("debug", false, "Muestra también en pantalla lo que se apunta en el log de depuración (lray debug log)")
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		if on, _ := cmd.Flags().GetBool("debug"); on || os.Getenv("LRAY_DEBUG") != "" {
+			debuglog.SetEcho(os.Stderr)
+		}
+	}
+	root.PersistentPostRun = func(cmd *cobra.Command, _ []string) {
+		if cmd.Annotations["lray/changes-servers"] != "" {
+			refreshCompletions(cmd)
+		}
+	}
 	cobra.AddTemplateFunc("es", func(s string) string { return strings.Replace(s, "[flags]", "[opciones]", 1) })
 	root.SetUsageTemplate(usageES)
 	root.SetHelpCommand(&cobra.Command{Hidden: true, Use: "no-help"})
-	root.CompletionOptions.HiddenDefaultCmd = true
+	// El autocompletado se instala solo (completion.go): no hace falta el
+	// comando completion de cobra.
+	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		newServer(),
 		newWorkspace(),
 		newModule(),
 		newUpdate(version),
-		newCompletion(root),
+		newDebug(),
+		newInstallCompletions(version),
 	)
 	return root
 }
@@ -89,28 +130,6 @@ Opciones globales:
 
 Usa "{{.CommandPath}} <comando> --help" para ver los detalles de cada comando.{{end}}
 `
-
-func newCompletion(root *cobra.Command) *cobra.Command {
-	return &cobra.Command{
-		Use:       "completion <bash|zsh|fish|powershell>",
-		Short:     "Genera el autocompletado (incluye los nombres de tus servers)",
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
-		RunE: func(_ *cobra.Command, args []string) error {
-			switch args[0] {
-			case "bash":
-				return root.GenBashCompletionV2(os.Stdout, true)
-			case "zsh":
-				return root.GenZshCompletion(os.Stdout)
-			case "fish":
-				return root.GenFishCompletion(os.Stdout, true)
-			case "powershell":
-				return root.GenPowerShellCompletionWithDesc(os.Stdout)
-			}
-			return fmt.Errorf("shell no soportada: %s", args[0])
-		},
-	}
-}
 
 // ------------------------------------------------------------- utilidades
 

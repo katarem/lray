@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/katarem/lray/internal/debuglog"
 	"github.com/katarem/lray/internal/ui"
 	"github.com/katarem/lray/internal/update"
 )
@@ -99,6 +101,15 @@ comando. Desactiva ese aviso con LRAY_NO_UPDATE_CHECK=1.`,
 			if err != nil {
 				return err
 			}
+			// El binario nuevo deja el autocompletado al día; si no puede,
+			// lo hará él solo en su primer comando.
+			if !completionsOff() {
+				refresh := exec.Command(exe, installCompletionsCmd)
+				refresh.Stdout = os.Stdout
+				if err := refresh.Run(); err != nil {
+					debuglog.Printf("autocompletado tras actualizar: %v", err)
+				}
+			}
 			ui.Say(ui.Party, "¡Listo! Ya tienes lray "+latest,
 				"Mira las novedades en "+ui.Code(update.ReleaseURL(latest)))
 			return nil
@@ -119,7 +130,7 @@ func startUpdateCheck(version string, args []string) func() {
 	}
 	if len(args) > 0 {
 		switch args[0] {
-		case "update", "completion", "__complete", "__completeNoDesc", "-v", "--version", "-h", "--help":
+		case "update", "__complete", "__completeNoDesc", installCompletionsCmd, "-v", "--version", "-h", "--help":
 			return noop
 		}
 	}

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Instalador de lray para Linux y macOS.
 #   curl -fsSL https://raw.githubusercontent.com/katarem/lray/main/install.sh | sh
-# Variables opcionales: LRAY_REPO, LRAY_VERSION (p. ej. v0.2.0), LRAY_BIN_DIR
+# Variables opcionales: LRAY_REPO, LRAY_VERSION (p. ej. v0.2.0), LRAY_BIN_DIR,
+# LRAY_NO_COMPLETIONS (no instalar el autocompletado en tu shell)
 set -eu
 
 REPO="${LRAY_REPO:-katarem/lray}"
@@ -50,6 +51,11 @@ tar -xzf "$tmp/$asset" -C "$tmp"
 mkdir -p "$BIN_DIR"
 install -m 0755 "$tmp/lray" "$BIN_DIR/lray"
 echo "lray instalado en $BIN_DIR/lray"
+
+# Autocompletado en bash, zsh y fish (lo mantiene lray solo a partir de aquí).
+if [ -z "${LRAY_NO_COMPLETIONS:-}" ]; then
+  "$BIN_DIR/lray" __install-completions 2>/dev/null || true
+fi
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

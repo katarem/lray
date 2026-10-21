@@ -14,6 +14,7 @@ func newRm() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:               "rm <nombre>",
+		Annotations:       changesServers,
 		Aliases:           []string{"remove"},
 		Short:             "Quita un server de la lista (sus archivos no se tocan)",
 		Args:              cobra.ExactArgs(1),

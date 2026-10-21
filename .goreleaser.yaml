@@ -45,6 +45,5 @@ brews:
     description: Gestiona entornos Liferay desde la terminal
     install: |
       bin.install "lray"
-      generate_completions_from_executable(bin/"lray", "completion")
     test: |
       system "#{bin}/lray", "--version"
