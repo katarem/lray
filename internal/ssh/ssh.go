@@ -33,6 +33,36 @@ var (
 // DefaultPersist es cuánto sigue viva la conexión sin usarse.
 const DefaultPersist = "4h"
 
+// Debug, si no es nil, recibe una línea por cada vez que se lanza ssh: qué se
+// ejecutó, cuánto tardó, cómo acabó y qué dijo por stderr. lray lo conecta a
+// su log de depuración.
+var Debug func(format string, args ...any)
+
+// trace apunta una ejecución de ssh en el log de depuración.
+func trace(args []string, start time.Time, err error, stderr []byte) {
+	if Debug == nil {
+		return
+	}
+	shown := make([]string, len(args))
+	for i, a := range args {
+		if len(a) > 160 {
+			a = a[:160] + fmt.Sprintf("…(%d bytes)", len(a))
+		}
+		shown[i] = a
+	}
+	res := "ok"
+	if err != nil {
+		res = err.Error()
+	}
+	Debug("ssh %s → %s (%s)", strings.Join(shown, " "), res, time.Since(start).Round(time.Millisecond))
+	if msg := strings.TrimSpace(string(stderr)); msg != "" {
+		if len(msg) > 2000 {
+			msg = msg[len(msg)-2000:]
+		}
+		Debug("ssh stderr: %s", strings.ReplaceAll(msg, "\n", " ⏎ "))
+	}
+}
+
 // Conn es una máquina remota a la que se llega por SSH.
 type Conn struct {
 	Dest string // usuario@máquina o alias de ~/.ssh/config
@@ -114,7 +144,52 @@ func (c *Conn) Connected() bool {
 	if c.Port != 0 {
 		args = append(args, "-p", strconv.Itoa(c.Port))
 	}
-	return c.command(context.Background(), append(args, "--", c.Dest)...).Run() == nil
+	args = append(args, "--", c.Dest)
+	var errb bytes.Buffer
+	cmd := c.command(context.Background(), args...)
+	cmd.Stderr = &errb
+	start := time.Now()
+	err := cmd.Run()
+	trace(args, start, err, errb.Bytes())
+	return err == nil
+}
+
+// socket es la ruta real del socket de la conexión compartida: ssh -G expande
+// %C con el destino tal y como lo resuelve ~/.ssh/config. "" si no se sabe.
+func (c *Conn) socket() string {
+	args := []string{"-G", "-o", "ControlPath=" + controlPath()}
+	if c.Port != 0 {
+		args = append(args, "-p", strconv.Itoa(c.Port))
+	}
+	out, err := c.command(context.Background(), append(args, "--", c.Dest)...).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if p, ok := strings.CutPrefix(line, "controlpath "); ok {
+			return strings.TrimSpace(p)
+		}
+	}
+	return ""
+}
+
+// clearStale borra el socket de una conexión compartida que ya no está viva
+// (llamar solo si Connected da false). Se quedan así cuando el equipo se
+// reinicia o se suspende con la sesión abierta: viven en la caché del usuario,
+// que sobrevive a los reinicios. Con uno así ssh no puede abrir otra ("already
+// exists, disabling multiplexing") y cada comando posterior se encuentra
+// "Control socket connect(...): Connection refused".
+func (c *Conn) clearStale() {
+	p := c.socket()
+	if p == "" {
+		return
+	}
+	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSocket != 0 {
+		err := os.Remove(p)
+		if Debug != nil {
+			Debug("ssh: socket caducado %s borrado (%v)", p, err)
+		}
+	}
 }
 
 // Connect deja abierta la conexión compartida. Primero lo intenta sin
@@ -125,6 +200,7 @@ func (c *Conn) Connect(ctx context.Context, interactive bool, before func()) err
 	if !multiplex() || c.Connected() {
 		return nil
 	}
+	c.clearStale()
 	err := c.master(ctx, true)
 	if err == nil || errors.Is(err, ErrUnreachable) {
 		return err
@@ -158,12 +234,22 @@ func (c *Conn) master(ctx context.Context, batch bool) error {
 	if !batch {
 		cmd.Stdin = os.Stdin // ssh pregunta por /dev/tty, pero alguna variante mira stdin
 	}
+	start := time.Now()
 	runErr := cmd.Run()
-	if runErr == nil {
-		return nil
-	}
 	msg, _ := os.ReadFile(errf.Name())
-	return classify(c.Dest, runErr, msg)
+	trace(args, start, runErr, msg)
+	if runErr != nil {
+		return classify(c.Dest, runErr, msg)
+	}
+	// ssh puede conectar y aun así no compartir la sesión (p. ej. si no puede
+	// crear el socket): los comandos siguientes no tendrían por dónde ir.
+	if !c.Connected() {
+		if l := lastLine(msg); l != "" {
+			return fmt.Errorf("ssh %s ha conectado pero no ha dejado abierta la sesión compartida: %s", c.Dest, l)
+		}
+		return fmt.Errorf("ssh %s ha conectado pero no ha dejado abierta la sesión compartida", c.Dest)
+	}
+	return nil
 }
 
 // Disconnect cierra la conexión compartida, si la hay.
@@ -182,9 +268,13 @@ func (c *Conn) Disconnect() error {
 // Los args llegan al script como $1, $2...
 func (c *Conn) Run(ctx context.Context, script string, args ...string) ([]byte, error) {
 	var out, errb bytes.Buffer
-	cmd := c.command(ctx, append(c.opts(true, "no"), "--", c.Dest, Remote(script, args...))...)
+	sargs := append(c.opts(true, "no"), "--", c.Dest, Remote(script, args...))
+	cmd := c.command(ctx, sargs...)
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
+	start := time.Now()
+	err := cmd.Run()
+	trace(sargs, start, err, errb.Bytes())
+	if err != nil {
 		if ctx != nil && ctx.Err() != nil {
 			return out.Bytes(), ctx.Err()
 		}
@@ -198,7 +288,8 @@ func (c *Conn) Run(ctx context.Context, script string, args ...string) ([]byte, 
 // script lo nota (EOF) y puede limpiar lo que dejó corriendo. Close devuelve
 // el error del script, si lo hubo.
 func (c *Conn) Stream(ctx context.Context, script string, args ...string) (io.ReadCloser, error) {
-	cmd := c.command(ctx, append(c.opts(true, "no"), "--", c.Dest, Remote(script, args...))...)
+	sargs := append(c.opts(true, "no"), "--", c.Dest, Remote(script, args...))
+	cmd := c.command(ctx, sargs...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -207,9 +298,10 @@ func (c *Conn) Stream(ctx context.Context, script string, args ...string) (io.Re
 	if err != nil {
 		return nil, err
 	}
-	s := &stream{cmd: cmd, stdin: stdin, stdout: stdout, dest: c.Dest}
+	s := &stream{cmd: cmd, args: sargs, start: time.Now(), stdin: stdin, stdout: stdout, dest: c.Dest}
 	cmd.Stderr = &s.errb
 	if err := cmd.Start(); err != nil {
+		trace(sargs, s.start, err, nil)
 		return nil, err
 	}
 	return s, nil
@@ -217,6 +309,8 @@ func (c *Conn) Stream(ctx context.Context, script string, args ...string) (io.Re
 
 type stream struct {
 	cmd    *exec.Cmd
+	args   []string
+	start  time.Time
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	errb   bytes.Buffer
@@ -238,8 +332,10 @@ func (s *stream) Close() error {
 		case <-time.After(3 * time.Second):
 			_ = s.cmd.Process.Kill()
 			<-done
+			trace(s.args, s.start, errors.New("cortado por lray"), s.errb.Bytes())
 			return // lo hemos cortado nosotros: no es un error del script
 		}
+		trace(s.args, s.start, err, s.errb.Bytes())
 		if err != nil {
 			s.err = classify(s.dest, err, s.errb.Bytes())
 		}
@@ -253,7 +349,10 @@ func (c *Conn) Interactive(ctx context.Context, command string) error {
 	args := append(c.opts(false, "no"), "-t", "--", c.Dest, command)
 	cmd := c.command(ctx, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	start := time.Now()
+	err := cmd.Run()
+	trace(args, start, err, nil)
+	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() != 255 {
 			return fmt.Errorf("el comando ha terminado con código %d", ee.ExitCode())
@@ -282,8 +381,40 @@ func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// noise son avisos de ssh que no explican el fallo y que, mezclados con él,
+// confundirían a classify: el del socket de la sesión compartida (si ya no
+// vale, ssh conecta por su cuenta, y su "Connection refused" no tiene que ver
+// con la máquina), el de known_hosts y el de la pseudo-terminal.
+var noise = []string{
+	"control socket connect(",
+	"controlsocket ",
+	"mux_client_",
+	"warning: permanently added",
+	"pseudo-terminal will not be allocated",
+}
+
+// clean quita de stderr las líneas de noise.
+func clean(stderr []byte) []byte {
+	var keep []string
+	for _, line := range strings.Split(string(stderr), "\n") {
+		low := strings.ToLower(strings.TrimSpace(line))
+		drop := false
+		for _, n := range noise {
+			if strings.HasPrefix(low, n) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			keep = append(keep, line)
+		}
+	}
+	return []byte(strings.Join(keep, "\n"))
+}
+
 // classify traduce los fallos de ssh (código 255) a errores con sentido.
 func classify(dest string, err error, stderr []byte) error {
+	stderr = clean(stderr)
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && ee.ExitCode() != 255 {
 		if msg := lastLine(stderr); msg != "" {

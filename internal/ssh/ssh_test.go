@@ -2,8 +2,12 @@ package ssh
 
 import (
 	"errors"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +69,63 @@ func TestClassify(t *testing.T) {
 	}
 	if got := err.Error(); got != "no hay ningún log que encaje con /opt/liferay/logs/liferay.*.log (código 3)" {
 		t.Errorf("mensaje = %q", got)
+	}
+}
+
+// Con un socket caducado de la sesión compartida, ssh avisa con "Connection
+// refused" antes de conectar por su cuenta; eso no quiere decir que la
+// máquina no responda.
+func TestClassifyIgnoresStaleSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("necesita sh")
+	}
+	e255 := exec.Command("sh", "-c", "exit 255").Run()
+	stderr := "Control socket connect(/home/yo/.cache/lray/ssh/851e2af0): Connection refused\n" +
+		"D169497@dc1glablrp004: Permission denied (publickey,password)."
+	if err := classify("host", e255, []byte(stderr)); !errors.Is(err, ErrAuth) {
+		t.Errorf("classify = %v, want ErrAuth", err)
+	}
+	stderr = "ControlSocket /home/yo/.cache/lray/ssh/851e2af0 already exists, disabling multiplexing\n" +
+		"ssh: connect to host 10.1.2.3 port 22: Connection timed out"
+	if err := classify("host", e255, []byte(stderr)); !errors.Is(err, ErrUnreachable) {
+		t.Errorf("classify = %v, want ErrUnreachable", err)
+	}
+}
+
+// Un socket que sobrevive a un reinicio tiene que desaparecer antes de abrir
+// la sesión; si no, ssh no puede crear la nueva.
+func TestClearStale(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("rutas de socket cortas solo garantizadas en Linux")
+	}
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("sin ssh")
+	}
+	dir, err := os.MkdirTemp("", "lray")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CACHE_HOME", dir)
+
+	c := New("yo@maquina.invalid", 0)
+	p := c.socket()
+	if !strings.HasPrefix(p, filepath.Join(dir, "lray", "ssh")) {
+		t.Fatalf("socket = %q, fuera de %s", p, dir)
+	}
+	l, err := net.Listen("unix", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close() // queda el fichero sin nadie escuchando, como tras un reinicio
+
+	if c.Connected() {
+		t.Fatal("Connected = true con un socket muerto")
+	}
+	c.clearStale()
+	if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		t.Errorf("el socket caducado sigue ahí: %v", err)
 	}
 }
