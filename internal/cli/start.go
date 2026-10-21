@@ -25,59 +25,67 @@ func newStart() *cobra.Command {
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Arrancar y volver a la terminal sin esperar")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Remotos: no pedir confirmación")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if reg, s, err := findServer(args[0]); err != nil {
-			return err
-		} else if s.IsRemote() {
-			r, started, err := remoteStart(cmd.Context(), reg, s, yes)
-			if err != nil || !started {
-				return err
-			}
-			if noWait {
-				ui.Say(ui.Happy, fmt.Sprintf("«%s» está arrancando", s.Name),
-					"Míralo con "+ui.Code("lray server logs "+s.Name))
-				return nil
-			}
-			if err := remoteWaitStart(cmd.Context(), s, r, *timeout); err != nil {
-				return err
-			}
-			ui.Say(ui.Party, fmt.Sprintf("«%s» está en marcha", s.Name),
-				ui.MutedText("Logs   ")+ui.Code("lray server logs "+s.Name),
-				ui.MutedText("Parar  ")+ui.Code("lray server stop "+s.Name))
-			return nil
-		}
-		reg, s, l, err := loadServer(args[0])
+		reg, s, err := findServer(args[0])
 		if err != nil {
 			return err
 		}
-		res, err := startServer(reg, s, l)
-		if err != nil || !res.started {
+		return runStart(cmd.Context(), reg, s, yes, noWait, *timeout)
+	}
+	return cmd
+}
+
+// runStart arranca un server, local o remoto, y salvo noWait espera a que
+// esté listo. yes se salta la confirmación de los remotos.
+func runStart(ctx context.Context, reg *config.Registry, s *config.Server, yes, noWait bool, timeout time.Duration) error {
+	if s.IsRemote() {
+		r, started, err := remoteStart(ctx, reg, s, yes)
+		if err != nil || !started {
 			return err
 		}
 		if noWait {
-			ui.Say(ui.Happy, fmt.Sprintf("«%s» está arrancando en segundo plano", s.Name),
+			ui.Say(ui.Happy, fmt.Sprintf("«%s» está arrancando", s.Name),
 				"Míralo con "+ui.Code("lray server logs "+s.Name))
 			return nil
 		}
-		err = ui.RunTask(fmt.Sprintf("Arrancando «%s»", s.Name), fmt.Sprintf("«%s» arrancado", s.Name),
-			func(ctx context.Context, update func(string)) error {
-				return liferay.WaitReady(ctx, l, res.offset, *timeout, update)
-			})
-		if errors.Is(err, ui.ErrInterrupted) {
-			ui.Say(ui.Thinking, "Dejo de esperar, pero sigue arrancando",
-				"Sigue el progreso con "+ui.Code("lray server logs "+s.Name))
-			return nil
-		}
-		if err != nil {
+		if err := remoteWaitStart(ctx, s, r, timeout); err != nil {
 			return err
 		}
 		ui.Say(ui.Party, fmt.Sprintf("«%s» está en marcha", s.Name),
-			ui.Code(url(l.Port())),
-			"",
 			ui.MutedText("Logs   ")+ui.Code("lray server logs "+s.Name),
 			ui.MutedText("Parar  ")+ui.Code("lray server stop "+s.Name))
 		return nil
 	}
-	return cmd
+	reg, s, l, err := loadServer(s.Name)
+	if err != nil {
+		return err
+	}
+	res, err := startServer(reg, s, l)
+	if err != nil || !res.started {
+		return err
+	}
+	if noWait {
+		ui.Say(ui.Happy, fmt.Sprintf("«%s» está arrancando en segundo plano", s.Name),
+			"Míralo con "+ui.Code("lray server logs "+s.Name))
+		return nil
+	}
+	err = ui.RunTask(fmt.Sprintf("Arrancando «%s»", s.Name), fmt.Sprintf("«%s» arrancado", s.Name),
+		func(ctx context.Context, update func(string)) error {
+			return liferay.WaitReady(ctx, l, res.offset, timeout, update)
+		})
+	if errors.Is(err, ui.ErrInterrupted) {
+		ui.Say(ui.Thinking, "Dejo de esperar, pero sigue arrancando",
+			"Sigue el progreso con "+ui.Code("lray server logs "+s.Name))
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ui.Say(ui.Party, fmt.Sprintf("«%s» está en marcha", s.Name),
+		ui.Code(url(l.Port())),
+		"",
+		ui.MutedText("Logs   ")+ui.Code("lray server logs "+s.Name),
+		ui.MutedText("Parar  ")+ui.Code("lray server stop "+s.Name))
+	return nil
 }
 
 type startResult struct {
