@@ -43,6 +43,8 @@ internal/ui/                Faro, palette, spinners (RunTask), prompts
 internal/update/            latest-release lookup, version compare, self-update (download + checksum + replace)
 internal/debuglog/          always-on debug log (<user cache>/lray/lray.log, rotated to .1 past 2 MB), Tail for `lray debug`
 internal/shellcomp/         installs completion scripts + a marked block in ~/.bashrc / ~/.zshrc / PowerShell profile (fish: completions dir)
+plugins/lray/               Claude Code plugin: skills/lray/SKILL.md teaches Claude to *use* lray (manifest in .claude-plugin/plugin.json, no version: installs track the commit)
+.claude-plugin/             marketplace.json listing plugins/lray (`claude plugin marketplace add katarem/lray`, `claude plugin install lray@lray`)
 ```
 
 Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `logview`. `liferay` → `logs`. `logview` → `logs`, `ui`. `cli` → `update`, `ssh`, `debuglog`, `shellcomp`. `ui`, `config`, `logs`, `scaffold`, `ssh`, `update`, `debuglog` and `shellcomp` do not import other internal packages (`liferay.Remote` talks to the machine through the `liferay.Exec` interface, which `ssh.Conn` satisfies; `cli` wires them in `remoteOf`; `ssh.Debug` is wired to `debuglog.Printf` in `Execute`). Keep it that way: domain packages never print or prompt; that belongs to `cli` + `ui`.
@@ -84,6 +86,7 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `
 - **Server names** must match `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` (`config.ValidName`).
 - **OS-specific code** goes in `process_unix.go` (`//go:build !windows`) / `process_windows.go` with the same function set (`processAlive`, `terminate`, `kill`, `startTomcat`, `MakeExecutable`).
 - **Log hot path** (`internal/logs`): hand-written ANSI codes, reused `strings.Builder`, buffered writer flushed per burst. Do not swap in lipgloss there. Respect `NO_COLOR`.
+- **Claude Code skill** (`plugins/lray/skills/lray/SKILL.md`, Spanish): it documents lray's user interface for Claude. Whenever you add, remove or change a command, flag, default or behaviour the user sees, update the skill in the same commit. Keep it out of `.claude/skills/` so it does not load while developing lray itself. Check with `claude plugin validate .`.
 - **Commits**: conventional commits (`feat:`, `fix:`, `docs:`...). GoReleaser excludes `docs:`, `test:` and `chore:` from the changelog.
 
 ## Environment variables

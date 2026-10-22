@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "lray",
+  "description": "Plugins de Claude Code para trabajar con lray, el CLI que gestiona entornos Liferay",
+  "owner": {
+    "name": "Rem",
+    "email": "108900240+katarem@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "lray",
+      "description": "Enseña a Claude a gestionar entornos Liferay con lray (desplegar, arrancar, parar, reiniciar, logs, servers remotos por SSH, crear workspaces y módulos) en vez de blade o gradlew a mano",
+      "author": {
+        "name": "Rem"
+      },
+      "source": "./plugins/lray",
+      "category": "development",
+      "homepage": "https://github.com/katarem/lray"
+    }
+  ]
+}

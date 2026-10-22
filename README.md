@@ -74,6 +74,17 @@ No tienes que hacer nada: lray lo instala solo al instalarlo o actualizarlo (con
 
 Los nombres de los servers se piden a lray al pulsar Tab, así que los que añades o quitas aparecen al momento; además, `server add`/`rm`/`init` y `workspace create` lo refrescan por si faltara algo. Si tenías una línea antigua con `lray completion ...` (ese comando ya no existe), lray la comenta para que no dé error. Si prefieres gestionarlo tú, `LRAY_NO_COMPLETIONS=1` lo desactiva.
 
+### Plugin para Claude Code
+
+El repo es también un marketplace de Claude Code con el plugin `lray`: una skill que enseña a Claude a usar lray para desplegar, arrancar, reiniciar, leer logs o crear módulos, en vez de `blade` o `gradlew` a mano.
+
+```sh
+claude plugin marketplace add katarem/lray
+claude plugin install lray@lray
+```
+
+Más detalles en [`plugins/lray`](plugins/lray/README.md).
+
 ## Uso
 
 ### Crear un workspace nuevo
@@ -279,6 +290,10 @@ internal/scaffold/templates plantillas de módulos (las de blade, embebidas en e
 internal/scaffold/wrapper/  Gradle wrapper oficial (embebido en el binario)
 internal/ui/                Faro, colores, spinners y preguntas
 internal/update/            comprobación de versiones nuevas y lray update
+internal/debuglog/          log de depuración (lray debug)
+internal/shellcomp/         instalación automática del autocompletado
+plugins/lray/               plugin de Claude Code con la skill de lray
+.claude-plugin/             marketplace de Claude Code (lista el plugin lray)
 ```
 
 ## Limitaciones conocidas
