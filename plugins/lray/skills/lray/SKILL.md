@@ -129,6 +129,17 @@ Tipos: `mvc-portlet`, `panel-app`, `api`, `service`, `service-builder`, `service
 - lray lee la versión de Liferay del `gradle.properties` y genera `javax` o `jakarta` según toque (desde la 2025.Q3, `jakarta`).
 - Después de crearlo, dile al usuario dónde ha quedado y, si quiere, despliégalo.
 
+## Carpetas del server
+
+```sh
+lray server open <nombre> -p                 # escribe la ruta registrada (raíz del workspace o liferay home)
+lray server open <nombre> --home -p          # el bundle; también --logs y --deploy (crea deploy/ si falta)
+lray server open <nombre>                    # la abre en el explorador del usuario
+```
+
+- Para saber dónde está algo, usa siempre `-p`: no abre nada y vale también con remotos (escribe `máquina:ruta`, útil para `scp`). Sin `-p`, en un remoto no abre nada: enseña la ruta y la dirección `sftp://` y sale con código 1.
+- `lray server shell <nombre>` (mismas `--home`/`--logs`/`--deploy`) abre una shell interactiva en esa carpeta, local o por SSH. Tú no puedes usarla; si el usuario quiere tocar algo a mano en el servidor, sugiérele `! lray server shell <nombre>`. Para leer o copiar archivos locales, usa la ruta de `open -p` directamente.
+
 ## Otros
 
 - `lray update --check` comprueba si hay versión nueva. `lray update -y` actualiza. Si está instalado con Homebrew, lray pide `brew upgrade lray`.

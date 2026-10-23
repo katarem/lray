@@ -58,6 +58,9 @@ func Execute(version string) (code int) {
 			ui.Say(ui.Sleepy, "Vale, lo dejamos aquí.")
 			return 130
 		}
+		if errors.Is(err, errShown) {
+			return 1
+		}
 		ui.Say(ui.Sad, "No he podido hacerlo", capitalize(err.Error()),
 			ui.MutedText("¿Crees que es un fallo de lray? Genera un informe con ")+ui.Code("lray debug report"))
 		return 1
@@ -132,6 +135,10 @@ Usa "{{.CommandPath}} <comando> --help" para ver los detalles de cada comando.{{
 `
 
 // ------------------------------------------------------------- utilidades
+
+// errShown: el comando ya ha explicado con Faro por qué no puede seguir; solo
+// queda salir con código 1 sin repetirlo.
+var errShown = errors.New("ya explicado al usuario")
 
 // findServer busca un server registrado, local o remoto.
 func findServer(name string) (*config.Registry, *config.Server, error) {

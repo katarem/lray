@@ -355,11 +355,19 @@ func (c *Conn) Interactive(ctx context.Context, command string) error {
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() != 255 {
-			return fmt.Errorf("el comando ha terminado con código %d", ee.ExitCode())
+			return &ExitError{Code: ee.ExitCode()}
 		}
 		return classify(c.Dest, err, nil)
 	}
 	return nil
+}
+
+// ExitError: el comando remoto terminó con un código distinto de 0. La
+// conexión fue bien; es el comando el que dice que algo falló.
+type ExitError struct{ Code int }
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("el comando ha terminado con código %d", e.Code)
 }
 
 // Remote monta la línea que ssh manda a la máquina: sh -c 'script' lray args...
