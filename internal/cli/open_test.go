@@ -96,6 +96,9 @@ func TestShellScript(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$1 $(pwd)\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	real := func(p string) string { r, _ := filepath.EvalSymlinks(p); return r }
+	// run devuelve los argumentos de la shell y la carpeta en la que acabó,
+	// con los enlaces resueltos (en macOS /var es un enlace a /private/var).
 	run := func(arg string) (string, int) {
 		cmd := exec.Command("sh", "-c", shellScript, "lray", arg)
 		cmd.Env = append(os.Environ(), "SHELL="+fake, "HOME="+home)
@@ -103,9 +106,9 @@ func TestShellScript(t *testing.T) {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return "", ee.ExitCode()
 		}
-		return strings.TrimSpace(string(out)), 0
+		flag, pwd, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+		return flag + " " + real(pwd), 0
 	}
-	real := func(p string) string { r, _ := filepath.EvalSymlinks(p); return r }
 
 	if out, code := run(dir); code != 0 || out != "-l "+real(dir) {
 		t.Errorf("carpeta: %q (código %d)", out, code)
