@@ -90,6 +90,17 @@ func RecordState(name, state string, err error) {
 	_ = st.Save()
 }
 
+// RenameState pasa el estado guardado de un server a su nombre nuevo.
+func RenameState(old, name string) {
+	if st, err := LoadStates(); err == nil {
+		if snap, ok := st.Servers[old]; ok {
+			delete(st.Servers, old)
+			st.Servers[name] = snap
+			_ = st.Save()
+		}
+	}
+}
+
 // ForgetState borra el estado guardado de un server.
 func ForgetState(name string) {
 	if st, err := LoadStates(); err == nil {

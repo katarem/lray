@@ -77,9 +77,18 @@ func TestStatesKeepLastKnown(t *testing.T) {
 		t.Errorf("tras volver a conectar: %+v", snap)
 	}
 
-	ForgetState("pre")
+	RenameState("pre", "preproduccion")
 	st, _ = LoadStates()
 	if _, ok := st.Servers["pre"]; ok {
+		t.Error("RenameState ha dejado el nombre viejo")
+	}
+	if snap := st.Servers["preproduccion"]; snap.State != "stopped" {
+		t.Errorf("RenameState ha perdido el estado: %+v", snap)
+	}
+
+	ForgetState("preproduccion")
+	st, _ = LoadStates()
+	if _, ok := st.Servers["preproduccion"]; ok {
 		t.Error("ForgetState no lo ha borrado")
 	}
 }

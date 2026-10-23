@@ -169,6 +169,13 @@ func askControl(ctx context.Context, r *liferay.Remote) (config.Control, error) 
 	if len(services) > 0 {
 		c.Service = services[0]
 	}
+	return controlForm(c, services)
+}
+
+// controlForm pregunta la gestión partiendo de c (valores por defecto o los
+// que ya tenía); services son los servicios encontrados en la máquina.
+func controlForm(c config.Control, services []string) (config.Control, error) {
+	from := c.Kind
 	desc := "lray lo usará en start, stop y dev, y para saber si está encendido."
 	if len(services) > 0 {
 		desc += "\nServicios que he encontrado: " + strings.Join(services, ", ")
@@ -192,10 +199,14 @@ func askControl(ctx context.Context, r *liferay.Remote) (config.Control, error) 
 	var fields []huh.Field
 	switch c.Kind {
 	case config.ControlSystemd, config.ControlService:
+		c.Start, c.Stop, c.Status = "", "", ""
 		fields = append(fields, huh.NewInput().Title("Nombre del servicio").Placeholder("jboss").
 			Value(&c.Service).Validate(required("dime el nombre del servicio")))
 	case config.ControlCustom:
-		c.Sudo = false
+		c.Service = ""
+		if from != config.ControlCustom {
+			c.Sudo = false // en comandos propios, sudo solo si lo pides
+		}
 		fields = append(fields,
 			huh.NewInput().Title("Comando para arrancarlo").Placeholder("/opt/liferay/jboss/bin/arrancar.sh").Value(&c.Start),
 			huh.NewInput().Title("Comando para pararlo").Value(&c.Stop),

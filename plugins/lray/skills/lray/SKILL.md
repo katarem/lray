@@ -83,10 +83,17 @@ lray server add <nombre> <ruta> --java /usr/lib/jvm/java-11 --port 9080 -y
 lray server add <nombre> usuario@maquina:/opt/liferay --systemd <servicio> -y     # remoto
 lray server rm <nombre> -y                               # solo lo quita de la lista; no borra archivos
 lray server set <nombre> --version "DXP 2025.Q1.5 LTS"   # versión a mano si no se detecta
+lray server set <nombre> --name <nuevo>                  # renombrar
+lray server set <nombre> --path <ruta>                   # apuntarlo a otra carpeta (remoto: misma máquina o usuario@maquina:/ruta)
+lray server set <nombre> --port 9080                     # cambiar el puerto
+lray server set <nombre> --java /usr/lib/jvm/java-21     # locales: JAVA_HOME ("" = el del sistema)
+lray server set <nombre> --log "logs/liferay.*.log"      # remotos: patrón de logs ("" = el de por defecto)
 ```
 
 - El nombre debe cumplir `^[a-zA-Z0-9][a-zA-Z0-9._-]*$`. Propón uno corto a partir de la carpeta si el usuario no lo da.
 - Si no pasas `--port`, lray elige un puerto libre y desplaza los del `server.xml`. Comenta el puerto que ha quedado.
+- `lray server edit <nombre>` abre un formulario con todo (también, en remotos, la máquina, el puerto SSH y cómo se arranca y se para). Necesita terminal, así que tú usa `set`; si el usuario quiere cambiar algo que `set` no cubre (la gestión de un remoto), sugiérele `! lray server edit <nombre>`.
+- `set` no pregunta nada y se pueden combinar sus opciones. En locales, `--path` y `--port` exigen que el server esté apagado; `--port` desplaza todos los puertos del `server.xml`. En remotos no se conecta: tras cambiar la ruta, haz `lray server check <nombre>`.
 - `--java` solo hace falta cuando conviven versiones que piden Java distinto (7.x con Java 8/11, trimestrales con Java 17/21). Busca JDKs instalados en `/usr/lib/jvm` antes de preguntar.
 - Para remotos, sin terminal necesitas indicar cómo se gestiona: `--systemd <svc>`, `--service <svc>` o `--start-cmd`/`--stop-cmd`/`--status-cmd`, y `--sudo=false` si no usa sudo. Si el usuario no sabe cómo se arranca allí, pídele que lo añada él con `! lray server add …` para que el asistente le pregunte. `--log` sirve si los logs no están en `logs/liferay.*.log`.
 
