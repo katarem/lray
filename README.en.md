@@ -17,6 +17,7 @@ lray server restart <name>         Stop it and start it again, waiting until it 
 lray server logs <name>            Live logs colored by level
 lray server dev <name>             start + logs; on exit asks whether to stop it
 lray server deploy <name>          Build and deploy (everything or the current module)
+lray server watch <name>           Deploy just what changed every time you save (like blade watch)
 
 lray workspace create [name]       Wizard to create a Liferay Workspace
 lray module create [name]          Wizard to create a module (like blade create)
@@ -185,6 +186,17 @@ lray server deploy store --clean
 
 It works like `blade deploy`: it runs `gradlew deploy` from the folder you are in, and Gradle builds that folder's project. It also adds `-Pliferay.workspace.home.dir=<server home>` so the JARs end up in the `deploy/` folder of the server you pick. That way you can build in one workspace and deploy to another bundle.
 
+### Deploy on save
+
+```sh
+cd ~/projects/store-workspace
+lray server watch store                  # deploys everything, then keeps watching
+lray server watch store -s               # without the initial deploy
+lray server watch store -f '**/*.ftl' -i '**/generated'
+```
+
+It works like `blade watch`: it watches the current folder (the whole workspace or just the module you are in) and, every time you save, deploys only the project that changed. JSP, CSS, SCSS, JS and `.map` files go through `deployFast -a`, which copies them into the already installed module without reinstalling it; anything else through `deploy -a`, and if you delete something, `clean deploy`. A project is a folder with `src/` or `client-extension.yaml`. It does not watch `build`, `bin`, `dist`, `node_modules`, `.gradle`, `bundles`, `.git` or editor temp files (`-i` adds more; `-f`, more files for `deployFast`). If the build fails it shows the error and keeps watching. Ctrl+C to quit.
+
 ### Update lray
 
 ```sh
@@ -269,6 +281,7 @@ main.go                     entry point and version
 internal/cli/               one file per command
 internal/liferay/           workspace/bundle detection, state, start, Gradle
 internal/logs/              efficient tail -f and level highlighting
+internal/watch/             file watching and what to deploy on change (lray server watch)
 internal/scaffold/          workspace and module generation, Liferay versions
 internal/scaffold/templates module templates (blade's, embedded in the binary)
 internal/scaffold/wrapper/  official Gradle wrapper (embedded in the binary)

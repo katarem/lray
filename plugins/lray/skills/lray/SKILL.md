@@ -74,6 +74,7 @@ lray server deploy <nombre> --clean
 - **Verifica el despliegue** si el server está encendido. Unos segundos después, busca en los logs el `STARTED <bundle-symbolic-name>` del módulo o errores de resolución (`Unresolved requirement`, `BundleException`):
   `timeout -s INT 6 lray server logs <nombre> -n 200 --collapse | grep -iE "STARTED|unresolved|bundleexception|error"`
   Si el server está apagado, el JAR queda en `deploy/` y se instalará al arrancar. Díselo al usuario.
+- `lray server watch <nombre>` (como `blade watch`) vigila la carpeta actual y despliega el proyecto que cambia cada vez que el usuario guarda: JSP/CSS/SCSS/JS con `deployFast -a`, lo demás con `deploy -a`, y `clean deploy` si se borra algo. Antes despliega todo (`-s` se lo salta); `-f '**/*.ftl'` añade ficheros para `deployFast` e `-i '**/generated'`, rutas a ignorar. No termina nunca (Ctrl+C para salir), así que **no lo ejecutes tú**: sugiérele al usuario `! lray server watch <nombre>` en su terminal, o lánzalo con `run_in_background` solo si te lo pide. Tú, después de cambiar algo, usa `deploy`.
 
 ## Añadir y quitar servers
 
@@ -145,4 +146,4 @@ lray server open <nombre>                    # la abre en el explorador del usua
 - `lray update --check` comprueba si hay versión nueva. `lray update -y` actualiza. Si está instalado con Homebrew, lray pide `brew upgrade lray`.
 - `lray debug report -o -` genera un informe para abrir un issue si lray falla. Lleva rutas y hosts, así que avisa al usuario de que lo revise antes de compartirlo.
 - Ante una opción de la que no estés seguro, `lray <comando> --help` es la fuente de verdad. Los textos de ayuda están en español.
-- Limitaciones: solo workspaces Gradle (no Maven), y `deploy` y `module create --server` solo con servers locales.
+- Limitaciones: solo workspaces Gradle (no Maven), y `deploy`, `watch` y `module create --server` solo con servers locales.
