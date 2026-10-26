@@ -254,12 +254,11 @@ Only needed for Homebrew. Without the `HOMEBREW_TAP_TOKEN` secret the release is
 
 ### Publish a version
 
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
+The version lives in the `VERSION` file (`X.Y.Z`, no `v`). To publish one, change it in the PR and merge it: when CI passes on `main` and the `vX.Y.Z` tag does not exist yet, CI itself creates it and publishes the release. On PRs, the `version` job already warns if `VERSION` is invalid or lower than the latest published version.
 
-When the tag is pushed, `.github/workflows/release.yml` runs GoReleaser, which:
+You can also push the tag by hand (`git tag vX.Y.Z && git push origin vX.Y.Z`), but it must match `VERSION`.
+
+When publishing, `.github/workflows/release.yml` runs GoReleaser, which:
 
 - Builds for Linux, macOS and Windows, on amd64 and arm64.
 - Uploads the `.tar.gz`, `.zip` and `checksums.txt` files to the release.
