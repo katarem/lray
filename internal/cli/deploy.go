@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/katarem/lray/internal/config"
 	"github.com/katarem/lray/internal/liferay"
 	"github.com/katarem/lray/internal/ui"
 )
@@ -40,52 +40,23 @@ un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.`,
 			if !ok {
 				return errors.New("aquí no hay ningún workspace de Liferay; entra en tu workspace o en uno de sus módulos")
 			}
-			scope := "todo el workspace"
-			if rel, _ := filepath.Rel(ws, cwd); rel != "." {
-				scope = filepath.ToSlash(rel)
-			}
+			scope := scopeOf(ws, cwd)
 
-			gradleArgs := []string{}
+			var tasks []string
 			if clean {
-				gradleArgs = append(gradleArgs, "clean")
+				tasks = append(tasks, "clean")
 			}
-			// Gradle usa como proyecto la carpeta desde la que se lanza, así que
-			// basta con ejecutar el wrapper en cwd. La propiedad redirige el
-			// deploy al liferay home del server elegido.
-			gradleArgs = append(gradleArgs, "deploy", "-Pliferay.workspace.home.dir="+l.Home)
-
-			var deployed, unchanged, tail []string
-			err = ui.RunTask(fmt.Sprintf("Desplegando %s en «%s»", scope, s.Name), fmt.Sprintf("Desplegado en «%s»", s.Name),
-				func(ctx context.Context, update func(string)) error {
-					lines, err := liferay.RunGradle(ctx, ws, cwd, s.JavaHome, gradleArgs, func(line string) {
-						task, ok := strings.CutPrefix(line, "> Task ")
-						if !ok {
-							return
-						}
-						update(task)
-						fields := strings.Fields(task)
-						if len(fields) == 0 || !strings.HasSuffix(fields[0], ":deploy") {
-							return
-						}
-						project := strings.TrimSuffix(strings.TrimPrefix(fields[0], ":"), ":deploy")
-						project = strings.ReplaceAll(project, ":", "/")
-						switch {
-						case len(fields) == 1:
-							deployed = append(deployed, project)
-						case fields[1] == "UP-TO-DATE":
-							unchanged = append(unchanged, project)
-						}
-					})
-					tail = lines
-					return err
-				})
+			tasks = append(tasks, "deploy")
+			res, err := gradleDeploy(fmt.Sprintf("Desplegando %s en «%s»", scope, s.Name), fmt.Sprintf("Desplegado en «%s»", s.Name),
+				ws, cwd, s, l, tasks)
 			if errors.Is(err, ui.ErrInterrupted) {
 				return err
 			}
 			if err != nil {
-				printGradleFailure(tail)
+				printGradleFailure(res.tail)
 				return errors.New("la compilación ha fallado; arriba tienes los errores")
 			}
+			deployed, unchanged := res.deployed, res.unchanged
 
 			var body []string
 			for _, p := range deployed {
@@ -113,4 +84,46 @@ un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.`,
 	}
 	cmd.Flags().BoolVar(&clean, "clean", false, "Hacer clean antes de compilar")
 	return cmd
+}
+
+type deployResult struct {
+	deployed, unchanged []string // proyectos, con / («modules/foo»)
+	tail                []string // últimas líneas de Gradle
+}
+
+// gradleDeploy ejecuta las tareas de Gradle en dir con un spinner y apunta
+// qué proyectos se han desplegado y cuáles no tenían cambios. Gradle usa como
+// proyecto la carpeta desde la que se lanza, así que basta con ejecutar el
+// wrapper en dir. La propiedad redirige el deploy al liferay home del server.
+func gradleDeploy(title, doneTitle, ws, dir string, s *config.Server, l *liferay.Layout, tasks []string) (deployResult, error) {
+	var res deployResult
+	args := append(append([]string{}, tasks...), "-Pliferay.workspace.home.dir="+l.Home)
+	err := ui.RunTask(title, doneTitle, func(ctx context.Context, update func(string)) error {
+		lines, err := liferay.RunGradle(ctx, ws, dir, s.JavaHome, args, func(line string) {
+			task, ok := strings.CutPrefix(line, "> Task ")
+			if !ok {
+				return
+			}
+			update(task)
+			fields := strings.Fields(task)
+			if len(fields) == 0 {
+				return
+			}
+			i := strings.LastIndex(fields[0], ":")
+			if i < 0 || (fields[0][i+1:] != "deploy" && fields[0][i+1:] != "deployFast") {
+				return
+			}
+			project := strings.ReplaceAll(strings.Trim(fields[0][:i], ":"), ":", "/")
+			switch {
+			case project == "":
+			case len(fields) == 1:
+				res.deployed = append(res.deployed, project)
+			case fields[1] == "UP-TO-DATE":
+				res.unchanged = append(res.unchanged, project)
+			}
+		})
+		res.tail = lines
+		return err
+	})
+	return res, err
 }

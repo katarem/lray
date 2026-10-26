@@ -15,6 +15,7 @@ lray server restart <nombre>       Lo para y lo vuelve a arrancar, esperando a q
 lray server logs <nombre>          Visor de logs en vivo: colores, JSON legible, entradas plegables
 lray server dev <nombre>           start + logs; al salir pregunta si apagarlo
 lray server deploy <nombre>        Compila y despliega (todo o el módulo actual)
+lray server watch <nombre>         Despliega solo lo que cambie cada vez que guardas (como blade watch)
 
 lray workspace create [nombre]     Asistente para crear un Liferay Workspace
 lray module create [nombre]        Asistente para crear un módulo (como blade create)
@@ -199,6 +200,17 @@ lray server deploy tienda --clean
 
 Funciona como `blade deploy`: ejecuta `gradlew deploy` desde la carpeta en la que estés, y Gradle construye el proyecto de esa carpeta. Además añade `-Pliferay.workspace.home.dir=<home del server>` para que los JAR acaben en el `deploy/` del server que eliges. Así puedes compilar en un workspace y desplegar en otro bundle.
 
+### Desplegar al guardar
+
+```sh
+cd ~/proyectos/tienda-workspace
+lray server watch tienda                 # despliega todo y se queda vigilando
+lray server watch tienda -s              # sin el deploy inicial
+lray server watch tienda -f '**/*.ftl' -i '**/generated'
+```
+
+Funciona como `blade watch`: vigila la carpeta actual (todo el workspace o solo el módulo donde estés) y, cada vez que guardas, despliega en el server solo el proyecto que ha cambiado. Los JSP, CSS, SCSS, JS y `.map` van con `deployFast -a`, que copia los ficheros al módulo ya instalado sin reinstalarlo; el resto, con `deploy -a`, y si borras algo, con `clean deploy`. Un proyecto es una carpeta con `src/` o `client-extension.yaml`. No vigila `build`, `bin`, `dist`, `node_modules`, `.gradle`, `bundles`, `.git` ni los temporales de los editores (`-i` añade más; `-f`, más ficheros para `deployFast`). Si la compilación falla te enseña el error y sigue vigilando. Ctrl+C para salir.
+
 ### Actualizar lray
 
 ```sh
@@ -285,6 +297,7 @@ internal/cli/               un fichero por comando
 internal/liferay/           detección de workspace/bundle, estado, arranque, Gradle
 internal/logs/              tail -f eficiente, agrupado en entradas, resaltado por nivel y formato de JSON
 internal/logview/           visor de logs a pantalla completa (lray server logs)
+internal/watch/             vigilancia de ficheros y qué desplegar al cambiar (lray server watch)
 internal/scaffold/          generación de workspaces y módulos, y versiones de Liferay
 internal/scaffold/templates plantillas de módulos (las de blade, embebidas en el binario)
 internal/scaffold/wrapper/  Gradle wrapper oficial (embebido en el binario)
