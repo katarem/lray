@@ -65,16 +65,17 @@ Liferay tarda minutos en arrancar. Lanza `start` y `restart` con `run_in_backgro
 cd <raíz del workspace> && lray server deploy <nombre>             # todos los módulos
 cd <workspace>/modules/<modulo> && lray server deploy <nombre>     # solo ese módulo
 lray server deploy <nombre> --clean
+lray server deploy <remoto> -y                                    # remoto: solo tras confirmarlo con el usuario
 ```
 
 - **La carpeta actual decide qué se compila**, como en `blade deploy`. Haz `cd` a la carpeta del módulo que ha cambiado salvo que pidan desplegarlo todo. Así es mucho más rápido.
 - Los JAR van al `deploy/` del server indicado, aunque el código sea de otro workspace. Compilar el workspace A y desplegar en el server B funciona.
-- Solo funciona con servers **locales**. lray rechaza desplegar en remotos.
+- **Remotos**: compila en local y sube por SSH al `deploy/` del remoto (o a `auto.deploy.deploy.dir`) solo lo que ha cambiado desde el último deploy a ese server. Si no se puede escribir ahí, lo mueve con `sudo`, con el dueño de `osgi/modules`. Sin terminal, `sudo -n` falla si pide contraseña: entonces pide al usuario que lo lance él con `! lray server deploy <remoto>`. Afecta a un entorno compartido, así que **confirma con el usuario antes** y solo entonces pasa `-y` (sin `-y` y sin terminal falla). "Nada nuevo" significa que ya estaba subido; `--clean` lo vuelve a subir todo. Si el remoto tiene `auto.deploy.enabled=false`, lray se niega.
 - La compilación con Gradle puede tardar. Usa un timeout de Bash amplio (p. ej. 600000) o `run_in_background`.
 - **Verifica el despliegue** si el server está encendido. Unos segundos después, busca en los logs el `STARTED <bundle-symbolic-name>` del módulo o errores de resolución (`Unresolved requirement`, `BundleException`):
   `timeout -s INT 6 lray server logs <nombre> -n 200 --collapse | grep -iE "STARTED|unresolved|bundleexception|error"`
   Si el server está apagado, el JAR queda en `deploy/` y se instalará al arrancar. Díselo al usuario.
-- `lray server watch <nombre>` (como `blade watch`) vigila la carpeta actual y despliega el proyecto que cambia cada vez que el usuario guarda: JSP/CSS/SCSS/JS con `deployFast -a`, lo demás con `deploy -a`, y `clean deploy` si se borra algo. Antes despliega todo (`-s` se lo salta); `-f '**/*.ftl'` añade ficheros para `deployFast` e `-i '**/generated'`, rutas a ignorar. No termina nunca (Ctrl+C para salir), así que **no lo ejecutes tú**: sugiérele al usuario `! lray server watch <nombre>` en su terminal, o lánzalo con `run_in_background` solo si te lo pide. Tú, después de cambiar algo, usa `deploy`.
+- `lray server watch <nombre>` (como `blade watch`) vigila la carpeta actual y despliega el proyecto que cambia cada vez que el usuario guarda: JSP/CSS/SCSS/JS con `deployFast -a`, lo demás con `deploy -a`, y `clean deploy` si se borra algo. Antes despliega todo (`-s` se lo salta); `-f '**/*.ftl'` añade ficheros para `deployFast` e `-i '**/generated'`, rutas a ignorar. No termina nunca (Ctrl+C para salir), así que **no lo ejecutes tú**: sugiérele al usuario `! lray server watch <nombre>` en su terminal, o lánzalo con `run_in_background` solo si te lo pide. Tú, después de cambiar algo, usa `deploy`. Solo funciona con servers locales: con remotos lray lo rechaza a propósito.
 
 ## Añadir y quitar servers
 
@@ -146,4 +147,4 @@ lray server open <nombre>                    # la abre en el explorador del usua
 - `lray update --check` comprueba si hay versión nueva. `lray update -y` actualiza. Si está instalado con Homebrew, lray pide `brew upgrade lray`.
 - `lray debug report -o -` genera un informe para abrir un issue si lray falla. Lleva rutas y hosts, así que avisa al usuario de que lo revise antes de compartirlo.
 - Ante una opción de la que no estés seguro, `lray <comando> --help` es la fuente de verdad. Los textos de ayuda están en español.
-- Limitaciones: solo workspaces Gradle (no Maven), y `deploy`, `watch` y `module create --server` solo con servers locales.
+- Limitaciones: solo workspaces Gradle (no Maven), y `watch` y `module create --server` solo con servers locales.

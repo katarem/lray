@@ -200,6 +200,15 @@ lray server deploy tienda --clean
 
 Funciona como `blade deploy`: ejecuta `gradlew deploy` desde la carpeta en la que estés, y Gradle construye el proyecto de esa carpeta. Además añade `-Pliferay.workspace.home.dir=<home del server>` para que los JAR acaben en el `deploy/` del server que eliges. Así puedes compilar en un workspace y desplegar en otro bundle.
 
+También despliega en servers remotos (los que añadiste con `usuario@máquina:/ruta`):
+
+```sh
+lray server deploy validacion            # te enseña qué va a subir y pregunta
+lray server deploy validacion -y         # sin preguntar
+```
+
+Compila en tu equipo y sube por SSH, a la carpeta `deploy/` del remoto (o a la de `auto.deploy.deploy.dir` si su `portal-ext.properties` la cambia), solo lo que haya cambiado desde la última vez. Ahí Liferay lo instala solo. Cada fichero se sube con otro nombre y se renombra al terminar, así Liferay nunca coge uno a medias. Si tu usuario no puede escribir en esa carpeta, lo sube a una temporal y lo mueve con `sudo` (te pide la contraseña), poniéndole el mismo dueño que los módulos de `osgi/modules`. Si alguien ha desplegado otra versión encima, `--clean` vuelve a subir todo lo que compiles. Si el remoto tiene `auto.deploy.enabled=false`, no sube nada y te avisa.
+
 ### Desplegar al guardar
 
 ```sh
@@ -209,7 +218,7 @@ lray server watch tienda -s              # sin el deploy inicial
 lray server watch tienda -f '**/*.ftl' -i '**/generated'
 ```
 
-Funciona como `blade watch`: vigila la carpeta actual (todo el workspace o solo el módulo donde estés) y, cada vez que guardas, despliega en el server solo el proyecto que ha cambiado. Los JSP, CSS, SCSS, JS y `.map` van con `deployFast -a`, que copia los ficheros al módulo ya instalado sin reinstalarlo; el resto, con `deploy -a`, y si borras algo, con `clean deploy`. Un proyecto es una carpeta con `src/` o `client-extension.yaml`. No vigila `build`, `bin`, `dist`, `node_modules`, `.gradle`, `bundles`, `.git` ni los temporales de los editores (`-i` añade más; `-f`, más ficheros para `deployFast`). Si la compilación falla te enseña el error y sigue vigilando. Ctrl+C para salir.
+Funciona como `blade watch`: vigila la carpeta actual (todo el workspace o solo el módulo donde estés) y, cada vez que guardas, despliega en el server solo el proyecto que ha cambiado. Los JSP, CSS, SCSS, JS y `.map` van con `deployFast -a`, que copia los ficheros al módulo ya instalado sin reinstalarlo; el resto, con `deploy -a`, y si borras algo, con `clean deploy`. Un proyecto es una carpeta con `src/` o `client-extension.yaml`. No vigila `build`, `bin`, `dist`, `node_modules`, `.gradle`, `bundles`, `.git` ni los temporales de los editores (`-i` añade más; `-f`, más ficheros para `deployFast`). Si la compilación falla te enseña el error y sigue vigilando. Ctrl+C para salir. Solo funciona con servers locales: subir cada cambio al guardar a un server compartido es peligroso, así que en los remotos usa `deploy`.
 
 ### Actualizar lray
 
@@ -246,6 +255,7 @@ El informe lleva la versión de lray y del sistema, la de `ssh`, tus servers y s
 | Última versión de lray consultada | carpeta de caché del usuario, `lray/update.json` |
 | Log de depuración | carpeta de caché del usuario, `lray/lray.log` (y `lray.log.1`) |
 | Sesiones SSH compartidas | carpeta de caché del usuario, `lray/ssh/` |
+| Lo último desplegado en cada remoto | carpeta de caché del usuario, `lray/deploy/<nombre>/` |
 | Autocompletado | `~/.local/share/lray/completion/` + un bloque en `~/.bashrc` / `~/.zshrc` |
 
 Otras variables de entorno:

@@ -61,6 +61,7 @@ func newRm() *cobra.Command {
 			if s.IsRemote() {
 				conn, _ := remoteOf(s)
 				_ = conn.Disconnect()
+				forgetDeployStage(name)
 				again = s.Location()
 			}
 			ui.Say(ui.Thinking, fmt.Sprintf("«%s» ya no está en la lista", name),

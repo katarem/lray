@@ -9,22 +9,38 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/katarem/lray/internal/config"
 	"github.com/katarem/lray/internal/liferay"
 	"github.com/katarem/lray/internal/ui"
 )
 
 func newDeploy() *cobra.Command {
-	var clean bool
+	var clean, yes bool
 	cmd := &cobra.Command{
 		Use:   "deploy <nombre>",
 		Short: "Compila y despliega en el server: todo el workspace o solo el módulo donde estés",
 		Long: `Compila y despliega en el server indicado, igual que blade deploy:
 desde la raíz del workspace despliega todos los módulos; desde dentro de
-un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.`,
+un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.
+
+En un server remoto compila aquí y sube por SSH lo que haya cambiado desde
+la última vez a su carpeta deploy/ (o auto.deploy.deploy.dir), donde
+Liferay lo instala solo. Antes te enseña qué va a subir y te pide
+confirmación (-y se la salta). Si no puedes escribir en esa carpeta, lo
+mueve con sudo y le pone el dueño de los ficheros de Liferay.`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeServers,
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, s, err := findServer(args[0])
+			if err != nil {
+				return err
+			}
+			if s.IsRemote() {
+				ws, cwd, err := currentWorkspace()
+				if err != nil {
+					return err
+				}
+				return remoteDeploy(cmd.Context(), s, ws, cwd, clean, yes)
+			}
 			_, s, l, err := loadServer(args[0])
 			if err != nil {
 				return err
@@ -32,13 +48,9 @@ un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.`,
 			if !l.HasBundle() {
 				return liferay.ErrNoBundle
 			}
-			cwd, err := os.Getwd()
+			ws, cwd, err := currentWorkspace()
 			if err != nil {
 				return err
-			}
-			ws, ok := liferay.FindWorkspace(cwd)
-			if !ok {
-				return errors.New("aquí no hay ningún workspace de Liferay; entra en tu workspace o en uno de sus módulos")
 			}
 			scope := scopeOf(ws, cwd)
 
@@ -48,7 +60,7 @@ un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.`,
 			}
 			tasks = append(tasks, "deploy")
 			res, err := gradleDeploy(fmt.Sprintf("Desplegando %s en «%s»", scope, s.Name), fmt.Sprintf("Desplegado en «%s»", s.Name),
-				ws, cwd, s, l, tasks)
+				ws, cwd, s.JavaHome, l.Home, tasks)
 			if errors.Is(err, ui.ErrInterrupted) {
 				return err
 			}
@@ -83,7 +95,21 @@ un módulo (o de una carpeta de módulos) solo lo que cuelga de ahí.`,
 		},
 	}
 	cmd.Flags().BoolVar(&clean, "clean", false, "Hacer clean antes de compilar")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Remotos: no pedir confirmación")
 	return cmd
+}
+
+// currentWorkspace es el workspace de Liferay que contiene la carpeta actual.
+func currentWorkspace() (ws, cwd string, err error) {
+	cwd, err = os.Getwd()
+	if err != nil {
+		return "", "", err
+	}
+	ws, ok := liferay.FindWorkspace(cwd)
+	if !ok {
+		return "", "", errors.New("aquí no hay ningún workspace de Liferay; entra en tu workspace o en uno de sus módulos")
+	}
+	return ws, cwd, nil
 }
 
 type deployResult struct {
@@ -94,12 +120,13 @@ type deployResult struct {
 // gradleDeploy ejecuta las tareas de Gradle en dir con un spinner y apunta
 // qué proyectos se han desplegado y cuáles no tenían cambios. Gradle usa como
 // proyecto la carpeta desde la que se lanza, así que basta con ejecutar el
-// wrapper en dir. La propiedad redirige el deploy al liferay home del server.
-func gradleDeploy(title, doneTitle, ws, dir string, s *config.Server, l *liferay.Layout, tasks []string) (deployResult, error) {
+// wrapper en dir. La propiedad redirige el deploy a home (el liferay home del
+// server, o la copia local de lo que se sube a un remoto).
+func gradleDeploy(title, doneTitle, ws, dir, javaHome, home string, tasks []string) (deployResult, error) {
 	var res deployResult
-	args := append(append([]string{}, tasks...), "-Pliferay.workspace.home.dir="+l.Home)
+	args := append(append([]string{}, tasks...), "-Pliferay.workspace.home.dir="+home)
 	err := ui.RunTask(title, doneTitle, func(ctx context.Context, update func(string)) error {
-		lines, err := liferay.RunGradle(ctx, ws, dir, s.JavaHome, args, func(line string) {
+		lines, err := liferay.RunGradle(ctx, ws, dir, javaHome, args, func(line string) {
 			task, ok := strings.CutPrefix(line, "> Task ")
 			if !ok {
 				return

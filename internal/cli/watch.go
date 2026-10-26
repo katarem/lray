@@ -45,6 +45,9 @@ editores. Ctrl+C para salir.`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeServers,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, s, err := findServer(args[0]); err == nil && s.IsRemote() {
+				return fmt.Errorf("«%s» es un server remoto y watch solo despliega en servers locales: subir cada cambio al guardar a un server compartido es peligroso. Para desplegar en él usa %s", s.Name, ui.Code("lray server deploy "+s.Name))
+			}
 			_, s, l, err := loadServer(args[0])
 			if err != nil {
 				return err
@@ -52,13 +55,9 @@ editores. Ctrl+C para salir.`,
 			if !l.HasBundle() {
 				return liferay.ErrNoBundle
 			}
-			cwd, err := os.Getwd()
+			ws, cwd, err := currentWorkspace()
 			if err != nil {
 				return err
-			}
-			ws, ok := liferay.FindWorkspace(cwd)
-			if !ok {
-				return errors.New("aquí no hay ningún workspace de Liferay; entra en tu workspace o en uno de sus módulos")
 			}
 			ignore = append(append([]string{}, watch.DefaultIgnore...), ignore...)
 			// Un liferay.workspace.home.dir dentro de la carpeta que no se llame
@@ -166,7 +165,7 @@ func (d *watchDeployer) run(ctx context.Context, dir string, tasks []string, nam
 		tasks = []string{"deploy", "-a"}
 	}
 	label := strings.Join(tasks, " ")
-	res, err := gradleDeploy(fmt.Sprintf("%s: %s", name, label), fmt.Sprintf("%s: %s", name, label), d.ws, dir, d.s, d.l, tasks)
+	res, err := gradleDeploy(fmt.Sprintf("%s: %s", name, label), fmt.Sprintf("%s: %s", name, label), d.ws, dir, d.s.JavaHome, d.l.Home, tasks)
 	if errors.Is(err, ui.ErrInterrupted) || ctx.Err() != nil {
 		return ui.ErrInterrupted
 	}

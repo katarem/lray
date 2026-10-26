@@ -27,6 +27,12 @@ func (localExec) Run(ctx context.Context, script string, args ...string) ([]byte
 	return exec.CommandContext(ctx, "sh", append([]string{"-c", script, "lray"}, args...)...).Output()
 }
 
+func (localExec) Send(ctx context.Context, in io.Reader, script string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", script, "lray"}, args...)...)
+	cmd.Stdin = in
+	return cmd.Output()
+}
+
 func (localExec) Stream(ctx context.Context, script string, args ...string) (io.ReadCloser, error) {
 	cmd := exec.Command("sh", append([]string{"-c", script, "lray"}, args...)...)
 	stdin, err := cmd.StdinPipe()
