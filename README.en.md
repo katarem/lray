@@ -186,6 +186,15 @@ lray server deploy store --clean
 
 It works like `blade deploy`: it runs `gradlew deploy` from the folder you are in, and Gradle builds that folder's project. It also adds `-Pliferay.workspace.home.dir=<server home>` so the JARs end up in the `deploy/` folder of the server you pick. That way you can build in one workspace and deploy to another bundle.
 
+It also deploys to remote servers (the ones added with `user@machine:/path`):
+
+```sh
+lray server deploy staging               # shows what it will upload and asks
+lray server deploy staging -y            # no confirmation
+```
+
+It builds on your machine and uploads over SSH, to the remote `deploy/` folder (or the `auto.deploy.deploy.dir` set in its `portal-ext.properties`), only what changed since last time. Liferay installs it from there. Each file is uploaded under another name and renamed when complete, so Liferay never picks up a half-written one. If your user cannot write to that folder, it uploads to a temp folder and moves it with `sudo` (asking for your password), giving it the same owner as the modules in `osgi/modules`. If someone deployed another version on top, `--clean` uploads everything you build again. If the remote has `auto.deploy.enabled=false`, it uploads nothing and tells you.
+
 ### Deploy on save
 
 ```sh
@@ -195,7 +204,7 @@ lray server watch store -s               # without the initial deploy
 lray server watch store -f '**/*.ftl' -i '**/generated'
 ```
 
-It works like `blade watch`: it watches the current folder (the whole workspace or just the module you are in) and, every time you save, deploys only the project that changed. JSP, CSS, SCSS, JS and `.map` files go through `deployFast -a`, which copies them into the already installed module without reinstalling it; anything else through `deploy -a`, and if you delete something, `clean deploy`. A project is a folder with `src/` or `client-extension.yaml`. It does not watch `build`, `bin`, `dist`, `node_modules`, `.gradle`, `bundles`, `.git` or editor temp files (`-i` adds more; `-f`, more files for `deployFast`). If the build fails it shows the error and keeps watching. Ctrl+C to quit.
+It works like `blade watch`: it watches the current folder (the whole workspace or just the module you are in) and, every time you save, deploys only the project that changed. JSP, CSS, SCSS, JS and `.map` files go through `deployFast -a`, which copies them into the already installed module without reinstalling it; anything else through `deploy -a`, and if you delete something, `clean deploy`. A project is a folder with `src/` or `client-extension.yaml`. It does not watch `build`, `bin`, `dist`, `node_modules`, `.gradle`, `bundles`, `.git` or editor temp files (`-i` adds more; `-f`, more files for `deployFast`). If the build fails it shows the error and keeps watching. Ctrl+C to quit. Local servers only: uploading every change on save to a shared server is dangerous, so use `deploy` for remotes.
 
 ### Update lray
 
@@ -232,6 +241,7 @@ The report holds the lray and system versions, the `ssh` version, your servers a
 | Last lray version seen | user cache folder, `lray/update.json` |
 | Debug log | user cache folder, `lray/lray.log` (and `lray.log.1`) |
 | Shared SSH sessions | user cache folder, `lray/ssh/` |
+| Last deploy to each remote | user cache folder, `lray/deploy/<name>/` |
 | Shell completion | `~/.local/share/lray/completion/` + a block in `~/.bashrc` / `~/.zshrc` |
 
 Other environment variables:

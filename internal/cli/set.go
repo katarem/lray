@@ -235,6 +235,7 @@ func saveChanges(reg *config.Registry, s *config.Server, old config.Server, writ
 	switch {
 	case s.IsRemote() && (otherMachine || s.Path != old.Path):
 		config.ForgetState(old.Name) // era el estado de otra ubicación
+		forgetDeployStage(old.Name)  // y lo subido, también
 		if otherMachine {
 			conn, _ := remoteOf(&old)
 			_ = conn.Disconnect()
@@ -242,6 +243,7 @@ func saveChanges(reg *config.Registry, s *config.Server, old config.Server, writ
 		return []string{"", ui.MutedText("Compruébalo con ") + ui.Code("lray server check "+s.Name)}, nil
 	case s.Name != old.Name:
 		config.RenameState(old.Name, s.Name)
+		renameDeployStage(old.Name, s.Name)
 	}
 	return nil, nil
 }

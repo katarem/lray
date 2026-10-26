@@ -267,10 +267,16 @@ func (c *Conn) Disconnect() error {
 // Run ejecuta script con sh en la máquina remota y devuelve su salida.
 // Los args llegan al script como $1, $2...
 func (c *Conn) Run(ctx context.Context, script string, args ...string) ([]byte, error) {
+	return c.Send(ctx, nil, script, args...)
+}
+
+// Send es Run con la entrada estándar del script conectada a in (p. ej. un
+// fichero que el script guarda allí). in nil = sin entrada.
+func (c *Conn) Send(ctx context.Context, in io.Reader, script string, args ...string) ([]byte, error) {
 	var out, errb bytes.Buffer
 	sargs := append(c.opts(true, "no"), "--", c.Dest, Remote(script, args...))
 	cmd := c.command(ctx, sargs...)
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, &out, &errb
 	start := time.Now()
 	err := cmd.Run()
 	trace(sargs, start, err, errb.Bytes())

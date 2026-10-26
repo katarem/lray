@@ -18,9 +18,10 @@ import (
 )
 
 // Exec ejecuta scripts de sh en otra máquina (lo cumple ssh.Conn; en los
-// tests, un falso).
+// tests, un falso). Send es Run con in como entrada estándar del script.
 type Exec interface {
 	Run(ctx context.Context, script string, args ...string) ([]byte, error)
+	Send(ctx context.Context, in io.Reader, script string, args ...string) ([]byte, error)
 	Stream(ctx context.Context, script string, args ...string) (io.ReadCloser, error)
 }
 

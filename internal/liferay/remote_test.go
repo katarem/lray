@@ -171,6 +171,10 @@ func (f *fakeExec) Run(_ context.Context, script string, args ...string) ([]byte
 	return []byte(f.out[script]), nil
 }
 
+func (f *fakeExec) Send(ctx context.Context, _ io.Reader, script string, args ...string) ([]byte, error) {
+	return f.Run(ctx, script, args...)
+}
+
 func (f *fakeExec) Stream(_ context.Context, _ string, args ...string) (io.ReadCloser, error) {
 	f.calls = append(f.calls, args)
 	return io.NopCloser(strings.NewReader(f.stream)), nil
