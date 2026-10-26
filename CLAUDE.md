@@ -30,6 +30,8 @@ The version is injected at build time with `-ldflags "-X main.version=..."`; `go
 
 ```
 main.go                     entry point; holds `version`
+VERSION                     version to publish (X.Y.Z); a new one merged to main is tagged and released by CI
+.github/scripts/version.sh  validates VERSION and says whether its tag is new (ci.yml)
 internal/cli/               one file per command (cobra); root.go has Execute, help template and shared helpers; server.go groups `lray server ...`, workspace.go `lray workspace ...` (+ shared workspace creation), module.go `lray module ...`, update.go `lray update` + the background check, debug.go `lray debug log|report`, watch.go `lray server watch` (deploy.go's `gradleDeploy` runs Gradle for both), completion.go automatic shell completion (hidden `__install-completions`), restart.go `lray server restart`
 internal/config/            server registry (servers.json), atomic save; last known state of remotes (state.json)
 internal/liferay/           workspace/bundle detection (Layout), state, start/stop, Gradle runner
@@ -110,7 +112,7 @@ Dependency direction: `cli` → `config`, `liferay`, `scaffold`, `ui`, `logs`, `
 
 ## Release
 
-Push a `v*` tag → `.github/workflows/release.yml` runs GoReleaser: builds linux/darwin/windows × amd64/arm64, uploads archives named `lray_<os>_<arch>` (no version, so `install.sh` can use `releases/latest/download`) plus `checksums.txt`, and updates the Homebrew formula in `<owner>/homebrew-tap` (no `generate_completions_from_executable`: the `completion` command is gone and lray installs completion itself on first run) only when the `HOMEBREW_TAP_TOKEN` secret is set (`skip_upload` uses `isEnvSet`; without it the release still succeeds). `brews` is deprecated in GoReleaser v2 but still works.
+The version to publish lives in `VERSION` (`X.Y.Z`, no `v`); builds still take theirs from `git describe` / the tag via ldflags. `ci.yml`: the `version` job runs `.github/scripts/version.sh` (also on PRs: fails if `VERSION` is not `X.Y.Z`, or is new but lower than the latest `vX.Y.Z` tag by `sort -V`; outputs `tag` and `new`). On a push to `main` with `new == 'true'` and `build` green, the `tag` job creates and pushes the annotated tag (as `github-actions[bot]`) and the `release` job calls `release.yml` through `workflow_call` in the same run, because a tag pushed with the `GITHUB_TOKEN` does not trigger other workflows. Runs on `main` are never cancelled (`concurrency`, only PRs cancel). Bump `VERSION` in the PR that should ship (feat → minor, fix → patch); without a bump nothing is published. A hand-pushed `v*` tag also triggers `release.yml`, which refuses tags that do not match `VERSION`. `release.yml` runs GoReleaser: builds linux/darwin/windows × amd64/arm64, uploads archives named `lray_<os>_<arch>` (no version, so `install.sh` can use `releases/latest/download`) plus `checksums.txt`, and updates the Homebrew formula in `<owner>/homebrew-tap` (no `generate_completions_from_executable`: the `completion` command is gone and lray installs completion itself on first run) only when the `HOMEBREW_TAP_TOKEN` secret is set (`skip_upload` uses `isEnvSet`; without it the release still succeeds). `brews` is deprecated in GoReleaser v2 but still works.
 
 ## Known gotchas
 

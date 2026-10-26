@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# En las PR, un push nuevo cancela la ejecución anterior; en main nunca, para
+# no cortar una publicación a medias.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     strategy:
@@ -19,3 +25,45 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./...
+
+  # Comprueba VERSION también en las PR, para enterarse antes de fusionar.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      new: ${{ steps.version.outputs.new }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        run: .github/scripts/version.sh
+
+  # En main, si VERSION trae una versión sin tag, crea el tag y publica la
+  # release aquí mismo: un tag subido con el GITHUB_TOKEN no lanza el workflow
+  # de release por su cuenta.
+  tag:
+    needs: [build, version]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Crear y subir el tag
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+  release:
+    needs: [version, tag]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    secrets: inherit

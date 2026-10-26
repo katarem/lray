@@ -269,12 +269,11 @@ Solo hace falta si quieres Homebrew. Sin el secreto `HOMEBREW_TAP_TOKEN` la rele
 
 ### Publicar una versión
 
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
+La versión está en el fichero `VERSION` (`X.Y.Z`, sin `v`). Para publicar una, cámbiala en la PR y fusiónala: cuando la CI pasa en `main` y no existe aún el tag `vX.Y.Z`, la propia CI lo crea y publica la release. En las PR, el job `version` ya avisa de si `VERSION` no es válida o es menor que la última versión publicada.
 
-Al subir el tag, el workflow `.github/workflows/release.yml` ejecuta GoReleaser y hace tres cosas:
+También puedes subir el tag a mano (`git tag vX.Y.Z && git push origin vX.Y.Z`), pero tiene que coincidir con `VERSION`.
+
+Al publicar, el workflow `.github/workflows/release.yml` ejecuta GoReleaser y hace tres cosas:
 
 - Compila para Linux, macOS y Windows, en amd64 y arm64.
 - Sube los `.tar.gz`, los `.zip` y `checksums.txt` a la release.
