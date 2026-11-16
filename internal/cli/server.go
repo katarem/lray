@@ -16,6 +16,7 @@ func newServer() *cobra.Command {
 	cmd.AddCommand(
 		newInit(), newAdd(), newRm(), newList(), newCheck(), newSet(), newEdit(),
 		newStart(), newStop(), newRestart(), newDev(), newLogs(), newDeploy(), newWatch(),
+		newLogLevel(),
 		newOpen(), newShell(), newConnect(), newDisconnect(),
 	)
 	return cmd

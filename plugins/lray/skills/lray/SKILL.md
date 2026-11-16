@@ -46,6 +46,21 @@ timeout -s INT 8 lray server logs <nombre> -n 1000 --plain | grep -n -A40 "Nombr
 
 Cuando diagnostiques, resume lo que encuentres (excepción, causa raíz, módulo y clase implicados, primera aparición). No pegues el log entero.
 
+### Nivel de log dentro de Liferay
+
+`--level`/`--only` solo filtran lo que ves. Para que Liferay **escriba** más (o menos) de un paquete o clase, cámbialo en caliente, igual que en el panel de control (Administración del servidor → Niveles de log). No hace falta reiniciar y se pierde al reiniciar:
+
+```sh
+lray server log-level <nombre> com.liferay.portal.search DEBUG   # lo cambia (OFF, FATAL, ERROR, WARN, INFO, DEBUG, TRACE, ALL)
+lray server log-level <nombre> com.liferay.portal.search         # en qué nivel está (y de qué paquete lo hereda)
+lray server log-level <nombre>                                   # los cambiados a mano desde que arrancó
+lray server log-level <nombre> --all                             # todos los configurados (7.4+)
+```
+
+- No pregunta nada. Al cambiar uno enseña el nivel de antes y el comando para dejarlo como estaba. Déjalo como estaba cuando acabes de diagnosticar.
+- Va por la Gogo shell (`module.framework.properties.osgi.console`). En local viene activada en `localhost:11311`. En remotos se conecta desde la propia máquina, por SSH, y suele estar desactivada en producción. Si lray dice que nada escucha, el usuario tiene que activarla en `portal-ext.properties` y reiniciar (o decir dónde escucha con `--gogo [máquina:]puerto`).
+- En un remoto compartido, DEBUG o TRACE pueden llenar el log de otras personas: **confirma con el usuario** antes de subir el nivel y bájalo al terminar.
+
 ## Arrancar, parar, reiniciar
 
 ```sh
