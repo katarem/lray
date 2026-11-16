@@ -187,13 +187,15 @@ func Load() (*Registry, error) {
 	return r, nil
 }
 
-// Save escribe el registro de forma atómica.
+// Save escribe el registro de forma atómica, ordenado por nombre. Ordena una
+// copia: los punteros que haya devuelto Get siguen apuntando al mismo server.
 func (r *Registry) Save() error {
-	sort.Slice(r.Servers, func(i, j int) bool { return r.Servers[i].Name < r.Servers[j].Name })
+	sorted := Registry{Servers: append([]Server(nil), r.Servers...)}
+	sort.Slice(sorted.Servers, func(i, j int) bool { return sorted.Servers[i].Name < sorted.Servers[j].Name })
 	if err := os.MkdirAll(filepath.Dir(r.file), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := json.MarshalIndent(sorted, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -223,11 +225,15 @@ func (r *Registry) Put(s Server) {
 	r.Servers = append(r.Servers, s)
 }
 
-// Remove quita un server; devuelve false si no existía.
+// Remove quita un server; devuelve false si no existía. Construye un slice
+// nuevo en vez de desplazar el que hay: un puntero de Get al server quitado
+// (o a los de detrás) acabaría apuntando a otro.
 func (r *Registry) Remove(name string) bool {
 	for i := range r.Servers {
 		if r.Servers[i].Name == name {
-			r.Servers = append(r.Servers[:i], r.Servers[i+1:]...)
+			rest := make([]Server, 0, len(r.Servers)-1)
+			rest = append(rest, r.Servers[:i]...)
+			r.Servers = append(rest, r.Servers[i+1:]...)
 			return true
 		}
 	}

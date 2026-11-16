@@ -16,6 +16,7 @@ lray server logs <nombre>          Visor de logs en vivo: colores, JSON legible,
 lray server dev <nombre>           start + logs; al salir pregunta si apagarlo
 lray server deploy <nombre>        Compila y despliega (todo o el módulo actual)
 lray server watch <nombre>         Despliega solo lo que cambie cada vez que guardas (como blade watch)
+lray server log-level <nombre>     Cambia en caliente el nivel de log de un paquete (como el panel de control)
 
 lray workspace create [nombre]     Asistente para crear un Liferay Workspace
 lray module create [nombre]        Asistente para crear un módulo (como blade create)
@@ -219,6 +220,19 @@ lray server watch tienda -f '**/*.ftl' -i '**/generated'
 ```
 
 Funciona como `blade watch`: vigila la carpeta actual (todo el workspace o solo el módulo donde estés) y, cada vez que guardas, despliega en el server solo el proyecto que ha cambiado. Los JSP, CSS, SCSS, JS y `.map` van con `deployFast -a`, que copia los ficheros al módulo ya instalado sin reinstalarlo; el resto, con `deploy -a`, y si borras algo, con `clean deploy`. Un proyecto es una carpeta con `src/` o `client-extension.yaml`. No vigila `build`, `bin`, `dist`, `node_modules`, `.gradle`, `bundles`, `.git` ni los temporales de los editores (`-i` añade más; `-f`, más ficheros para `deployFast`). Si la compilación falla te enseña el error y sigue vigilando. Ctrl+C para salir. Solo funciona con servers locales: subir cada cambio al guardar a un server compartido es peligroso, así que en los remotos usa `deploy`.
+
+### Cambiar el nivel de log de un paquete
+
+```sh
+lray server log-level tienda com.liferay.portal.search DEBUG   # lo pone en DEBUG ahora mismo
+lray server log-level tienda com.liferay.portal.search         # en qué nivel está y de dónde lo hereda
+lray server log-level tienda                                   # los que se han cambiado a mano
+lray server log-level tienda --all                             # todos los configurados (7.4+)
+```
+
+Hace lo mismo que el panel de control (Administración del servidor → Niveles de log): cambia lo que Liferay escribe, sin reiniciar, y se pierde al reiniciar. No confundir con `--level` de `lray server logs`, que solo filtra lo que ves. Al cambiar uno te dice cómo estaba y el comando para dejarlo igual. Niveles: `OFF`, `FATAL`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE` y `ALL`.
+
+Va por la Gogo shell, la que abre `module.framework.properties.osgi.console` en `portal-ext.properties`. Los workspaces la tienen en local en `localhost:11311` (vía `portal-developer.properties`), así que en tus servers locales funciona sin hacer nada. En los remotos lray se conecta desde la propia máquina, por SSH (necesita `bash` o `python3` allí). En producción suele estar desactivada: para usarla, añade `module.framework.properties.osgi.console=localhost:11311` a su `portal-ext.properties` y reinícialo. Si escucha en otro sitio, díselo con `--gogo [máquina:]puerto`. En un clúster solo cambia el nodo de ese server. Funciona desde Liferay 7.0 hasta las quarterly; en 7.3 y anteriores `--all` no está disponible.
 
 ### Actualizar lray
 

@@ -2,6 +2,7 @@ package liferay
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -178,6 +179,10 @@ func (f *fakeExec) Send(ctx context.Context, _ io.Reader, script string, args ..
 func (f *fakeExec) Stream(_ context.Context, _ string, args ...string) (io.ReadCloser, error) {
 	f.calls = append(f.calls, args)
 	return io.NopCloser(strings.NewReader(f.stream)), nil
+}
+
+func (f *fakeExec) Pipe(context.Context, string, ...string) (io.ReadWriteCloser, error) {
+	return nil, errors.New("fakeExec no hace Pipe")
 }
 
 func TestRemoteFollowAndInspectArgs(t *testing.T) {

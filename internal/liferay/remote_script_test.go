@@ -5,6 +5,7 @@ package liferay
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +35,11 @@ func (localExec) Send(ctx context.Context, in io.Reader, script string, args ...
 	return cmd.Output()
 }
 
-func (localExec) Stream(ctx context.Context, script string, args ...string) (io.ReadCloser, error) {
+func (e localExec) Stream(ctx context.Context, script string, args ...string) (io.ReadCloser, error) {
+	return e.Pipe(ctx, script, args...)
+}
+
+func (localExec) Pipe(ctx context.Context, script string, args ...string) (io.ReadWriteCloser, error) {
 	cmd := exec.Command("sh", append([]string{"-c", script, "lray"}, args...)...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -50,11 +56,13 @@ func (localExec) Stream(ctx context.Context, script string, args ...string) (io.
 }
 
 type localStream struct {
-	io.ReadCloser
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
-	once  sync.Once
+	io.ReadCloser // stdout
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	once          sync.Once
 }
+
+func (s *localStream) Write(p []byte) (int, error) { return s.stdin.Write(p) }
 
 // Close hace lo mismo que ssh al cortar: cierra la entrada del script.
 func (s *localStream) Close() error {
@@ -477,5 +485,87 @@ func TestInspectScriptVersionFromKernel(t *testing.T) {
 	}
 	if info.Version != "DXP 2025.Q1.5 LTS" || !strings.HasSuffix(info.Kernel, "portal-kernel.jar") {
 		t.Errorf("Version = %q (kernel %q), want la del portal desplegado", info.Version, info.Kernel)
+	}
+}
+
+func TestGogoConfigScript(t *testing.T) {
+	home := t.TempDir()
+	r := &Remote{Exec: localExec{}, Path: home}
+	ctx := context.Background()
+	if v, set, err := r.GogoConfig(ctx); err != nil || set {
+		t.Fatalf("sin ficheros: %q, %v, %v", v, set, err)
+	}
+	os.WriteFile(filepath.Join(home, "portal-ext.properties"), []byte("# module.framework.properties.osgi.console=1\r\n module.framework.properties.osgi.console = localhost:12311\r\n"), 0o644)
+	if v, set, err := r.GogoConfig(ctx); err != nil || !set || v != "localhost:12311" {
+		t.Fatalf("portal-ext: %q, %v, %v", v, set, err)
+	}
+	os.WriteFile(filepath.Join(home, "portal-setup-wizard.properties"), []byte("module.framework.properties.osgi.console=\n"), 0o644)
+	if v, set, err := r.GogoConfig(ctx); err != nil || !set || v != "" {
+		t.Fatalf("desactivada en el asistente: %q, %v, %v", v, set, err)
+	}
+	r.Path = filepath.Join(home, "no-existe")
+	if _, _, err := r.GogoConfig(ctx); err == nil {
+		t.Fatal("una carpeta que no existe debería dar error")
+	}
+}
+
+// El puente se prueba con bash y, si lo hay, con python3 (sin bash en el PATH).
+func TestGogoRelayScript(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	tools := map[string]string{"bash": ""}
+	if py, err := exec.LookPath("python3"); err == nil {
+		// un PATH con sh, cat y python3 pero sin bash
+		dir := t.TempDir()
+		for _, b := range []string{"sh", "cat", "kill"} {
+			if p, err := exec.LookPath(b); err == nil {
+				os.Symlink(p, filepath.Join(dir, b))
+			}
+		}
+		os.Symlink(py, filepath.Join(dir, "python3"))
+		tools["python3"] = dir
+	}
+	for tool, path := range tools {
+		t.Run(tool, func(t *testing.T) {
+			if path != "" {
+				t.Setenv("PATH", path)
+			}
+			f := newFakeGogo(t, log4jClasses[1])
+			_, port, _ := net.SplitHostPort(f.addr())
+			p, _ := strconv.Atoi(port)
+			r := &Remote{Exec: localExec{}}
+			conn, err := r.Gogo(ctx, "127.0.0.1", p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, err := OpenGogo(ctx, conn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l, err := g.Log4J(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.SetLevel(ctx, "com.example", "TRACE"); err != nil {
+				t.Fatal(err)
+			}
+			g.Close()
+			select { // al cerrar, el puente cierra la conexión y la sesión acaba
+			case <-f.closed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("la conexión con la Gogo shell sigue abierta")
+			}
+			if f.custom["com.example"] != "TRACE" {
+				t.Fatalf("custom = %v", f.custom)
+			}
+
+			ln, _ := net.Listen("tcp", "127.0.0.1:0")
+			_, closedPort, _ := net.SplitHostPort(ln.Addr().String())
+			ln.Close()
+			cp, _ := strconv.Atoi(closedPort)
+			if _, err := r.Gogo(ctx, "127.0.0.1", cp); !errors.Is(err, ErrGogoRefused) {
+				t.Fatalf("puerto cerrado: %v", err)
+			}
+		})
 	}
 }

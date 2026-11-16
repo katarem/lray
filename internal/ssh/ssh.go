@@ -294,6 +294,13 @@ func (c *Conn) Send(ctx context.Context, in io.Reader, script string, args ...st
 // script lo nota (EOF) y puede limpiar lo que dejó corriendo. Close devuelve
 // el error del script, si lo hubo.
 func (c *Conn) Stream(ctx context.Context, script string, args ...string) (io.ReadCloser, error) {
+	return c.Pipe(ctx, script, args...)
+}
+
+// Pipe es Stream pudiendo escribir en la entrada estándar del script: un
+// canal en los dos sentidos (p. ej. un puente a un puerto de la máquina).
+// Close cierra la entrada y espera al script como en Stream.
+func (c *Conn) Pipe(ctx context.Context, script string, args ...string) (io.ReadWriteCloser, error) {
 	sargs := append(c.opts(true, "no"), "--", c.Dest, Remote(script, args...))
 	cmd := c.command(ctx, sargs...)
 	stdin, err := cmd.StdinPipe()
@@ -325,7 +332,8 @@ type stream struct {
 	err    error
 }
 
-func (s *stream) Read(p []byte) (int, error) { return s.stdout.Read(p) }
+func (s *stream) Read(p []byte) (int, error)  { return s.stdout.Read(p) }
+func (s *stream) Write(p []byte) (int, error) { return s.stdin.Write(p) }
 
 func (s *stream) Close() error {
 	s.once.Do(func() {

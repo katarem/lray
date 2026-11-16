@@ -23,6 +23,9 @@ type Exec interface {
 	Run(ctx context.Context, script string, args ...string) ([]byte, error)
 	Send(ctx context.Context, in io.Reader, script string, args ...string) ([]byte, error)
 	Stream(ctx context.Context, script string, args ...string) (io.ReadCloser, error)
+	// Pipe es Stream con la entrada estándar del script abierta para
+	// escribir: un canal en los dos sentidos. Close cierra la entrada.
+	Pipe(ctx context.Context, script string, args ...string) (io.ReadWriteCloser, error)
 }
 
 // DefaultRemoteLog es el patrón de logs por defecto, relativo al liferay home.
