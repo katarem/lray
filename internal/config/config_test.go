@@ -92,3 +92,41 @@ func TestStatesKeepLastKnown(t *testing.T) {
 		t.Error("ForgetState no lo ha borrado")
 	}
 }
+
+// Un puntero de Get no puede cambiar de server al quitar otro ni al guardar
+// (Save ordena por nombre). Antes, rm enseñaba la ruta del server siguiente.
+func TestGetPointerSurvivesRemoveAndSave(t *testing.T) {
+	t.Setenv("LRAY_HOME", t.TempDir())
+	r, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Put(Server{Name: "local-turismo", Path: "/home/yo/turismo"})
+	r.Put(Server{Name: "validacion-turismo", Path: "/opt/liferay", Host: "yo@maquina"})
+	r.Put(Server{Name: "zeta", Path: "/z"})
+
+	s, _ := r.Get("local-turismo")
+	r.Remove("local-turismo")
+	if s.Name != "local-turismo" || s.Path != "/home/yo/turismo" {
+		t.Fatalf("tras Remove el puntero es de %q (%s)", s.Name, s.Path)
+	}
+	if _, ok := r.Get("local-turismo"); ok || len(r.Servers) != 2 {
+		t.Fatalf("Remove no lo ha quitado: %+v", r.Servers)
+	}
+
+	z, _ := r.Get("zeta")
+	z.Name = "alfa" // ahora va primero al ordenar
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if z.Name != "alfa" || z.Path != "/z" {
+		t.Fatalf("tras Save el puntero es de %q (%s)", z.Name, z.Path)
+	}
+	again, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Servers) != 2 || again.Servers[0].Name != "alfa" || again.Servers[1].Name != "validacion-turismo" {
+		t.Fatalf("servers.json no está ordenado: %+v", again.Servers)
+	}
+}

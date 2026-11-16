@@ -25,10 +25,11 @@ func newRm() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, ok := reg.Get(name)
+			found, ok := reg.Get(name)
 			if !ok {
 				return fmt.Errorf("no tengo ningún server llamado «%s»", name)
 			}
+			s := *found // copia: tras Remove el puntero no es del server quitado
 			running := false
 			if !s.IsRemote() {
 				if l, err := liferay.Resolve(s.Path); err == nil {
@@ -59,7 +60,7 @@ func newRm() *cobra.Command {
 			config.ForgetState(name)
 			again := ui.ShortPath(s.Path)
 			if s.IsRemote() {
-				conn, _ := remoteOf(s)
+				conn, _ := remoteOf(&s)
 				_ = conn.Disconnect()
 				forgetDeployStage(name)
 				again = s.Location()
